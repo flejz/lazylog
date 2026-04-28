@@ -76,7 +76,7 @@ fn run_worker(cmd_rx: Receiver<WorkerCmd>, result_tx: Sender<FilterMsg>) {
                             bytes_read += bytes.len() as u64 + 1;
 
                             // Check for cancellation every 10k lines
-                            if line_no % 10_000 == 0 {
+                            if line_no.is_multiple_of(10_000) {
                                 if let Ok(new_cmd) = cmd_rx.try_recv() {
                                     match new_cmd {
                                         WorkerCmd::Cancel | WorkerCmd::RecomputeFilter { .. } => {

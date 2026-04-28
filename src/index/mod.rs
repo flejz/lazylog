@@ -19,7 +19,7 @@ impl SparseIndex {
 
     /// Record the byte offset of line `line_no` if it falls on a stride boundary.
     pub fn push(&mut self, line_no: u64, byte_offset: u64) {
-        if line_no % STRIDE == 0 {
+        if line_no.is_multiple_of(STRIDE) {
             let expected = (line_no / STRIDE) as usize;
             if self.offsets.len() == expected {
                 self.offsets.push(byte_offset);

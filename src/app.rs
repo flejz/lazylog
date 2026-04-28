@@ -379,12 +379,9 @@ fn build_buffer(args: &Args) -> Result<(BufferKind, FormatHint, u64)> {
     let file_len = meta.len();
 
     if file_len <= MMAP_THRESHOLD && !args.follow {
-        match MmapBuffer::open(path) {
-            Ok(buf) => {
-                let hint = buf.read_line(0).map(|b| detect_format(&b)).unwrap_or(FormatHint::Text);
-                return Ok((BufferKind::Mmap(buf), hint, file_len));
-            }
-            Err(_) => {}
+        if let Ok(buf) = MmapBuffer::open(path) {
+            let hint = buf.read_line(0).map(|b| detect_format(&b)).unwrap_or(FormatHint::Text);
+            return Ok((BufferKind::Mmap(buf), hint, file_len));
         }
     }
 
@@ -453,9 +450,8 @@ fn event_loop(app: &mut AppState, terminal: &mut Tui) -> Result<()> {
 
         if event::poll(tick)? {
             match event::read()? {
-                Event::Key(key) if key.kind == crossterm::event::KeyEventKind::Press => {
-                    if handle_key(app, key) { return Ok(()); }
-                }
+                Event::Key(key) if key.kind == crossterm::event::KeyEventKind::Press
+                    && handle_key(app, key) => { return Ok(()); }
                 Event::Mouse(mouse) => handle_mouse(app, mouse),
                 _ => {}
             }
