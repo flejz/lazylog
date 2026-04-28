@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "lazylog", about = "Tiny portable TUI log viewer")]
+#[command(name = "lazylog", about = "Tiny portable TUI log viewer for any log format")]
 struct Cli {
     /// Log file to open
     file: Option<PathBuf>,
