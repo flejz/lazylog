@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            artifact: lazylog
+            musl: true
+
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: lazylog.exe
+            # Override local .cargo/config.toml which hardcodes a dev machine path.
+            # On GH Actions the MSVC toolchain link.exe is already on PATH.
+            linker: link.exe
+
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: lazylog
+
+          - os: macos-13
+            target: x86_64-apple-darwin
+            artifact: lazylog
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install musl-tools
+        if: matrix.musl
+        run: sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: ${{ matrix.linker }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lazylog-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/${{ matrix.artifact }}
+          if-no-files-found: error
+
+  release:
+    name: create release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Rename artifacts
+        run: |
+          mkdir release
+          cp artifacts/lazylog-x86_64-unknown-linux-musl/lazylog   release/lazylog-linux-x86_64
+          cp artifacts/lazylog-x86_64-pc-windows-msvc/lazylog.exe  release/lazylog-windows-x86_64.exe
+          cp artifacts/lazylog-aarch64-apple-darwin/lazylog         release/lazylog-macos-arm64
+          cp artifacts/lazylog-x86_64-apple-darwin/lazylog          release/lazylog-macos-x86_64
+          chmod +x release/lazylog-linux-x86_64 release/lazylog-macos-*
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
