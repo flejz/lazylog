@@ -1,0 +1,16 @@
+# Maintainer: flejz <flejz@protonmail.com>
+pkgname=lazylog-bin
+pkgver=VERSION
+pkgrel=1
+pkgdesc="Tiny portable TUI log viewer — JSON, plain text, syslog, any format"
+arch=('x86_64')
+url="https://github.com/flejz/lazylog"
+license=('MIT')
+provides=('lazylog')
+conflicts=('lazylog' 'lazylog-git')
+source_x86_64=("lazylog-$pkgver::$url/releases/download/v$pkgver/lazylog-linux-x86_64")
+sha256sums_x86_64=('SKIP')
+
+package() {
+    install -Dm755 "$srcdir/lazylog-$pkgver" "$pkgdir/usr/bin/lazylog"
+}
