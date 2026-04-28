@@ -14,8 +14,8 @@ pub fn register() -> Result<()> {
     }
     #[cfg(target_os = "macos")]
     {
-        println!("macOS: add tinylogviewer to your PATH, then:");
-        println!("  duti -s com.tinylogviewer public.plain-text viewer");
+        println!("macOS: add lazylog to your PATH, then:");
+        println!("  duti -s com.lazylog public.plain-text viewer");
         println!("  (or right-click a .log file → Get Info → Open With → Change All)");
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
@@ -35,16 +35,16 @@ fn register_windows(exe_str: &str) -> Result<()> {
 
     // Associate .log extension
     let (ext_key, _) = hkcr.create_subkey(".log")?;
-    ext_key.set_value("", &"tinylogviewer.logfile")?;
+    ext_key.set_value("", &"lazylog.logfile")?;
 
     // Create file type
-    let (ftype, _) = hkcr.create_subkey("tinylogviewer.logfile")?;
+    let (ftype, _) = hkcr.create_subkey("lazylog.logfile")?;
     ftype.set_value("", &"Log File")?;
 
-    let (cmd, _) = hkcr.create_subkey("tinylogviewer.logfile\\shell\\open\\command")?;
+    let (cmd, _) = hkcr.create_subkey("lazylog.logfile\\shell\\open\\command")?;
     cmd.set_value("", &format!("\"{}\" \"%1\"", exe_str))?;
 
-    println!("Registered .log → tinylogviewer at HKCR\\.log");
+    println!("Registered .log → lazylog at HKCR\\.log");
     println!("You may need to run as Administrator for system-wide registration.");
     Ok(())
 }
@@ -59,17 +59,17 @@ fn register_linux(exe_str: &str) -> Result<()> {
     fs::create_dir_all(&apps_dir)?;
 
     let desktop = format!(
-        "[Desktop Entry]\nType=Application\nName=tinylogviewer\nExec={exe_str} %f\nMimeType=text/x-log;text/plain;\nNoDisplay=false\nTerminal=true\n"
+        "[Desktop Entry]\nType=Application\nName=lazylog\nExec={exe_str} %f\nMimeType=text/x-log;text/plain;\nNoDisplay=false\nTerminal=true\n"
     );
-    let desktop_path = format!("{apps_dir}/tinylogviewer.desktop");
+    let desktop_path = format!("{apps_dir}/lazylog.desktop");
     fs::write(&desktop_path, desktop)?;
 
     Command::new("xdg-mime")
-        .args(["default", "tinylogviewer.desktop", "text/x-log"])
+        .args(["default", "lazylog.desktop", "text/x-log"])
         .status()
         .ok();
 
     println!("Created {desktop_path}");
-    println!("Associated text/x-log with tinylogviewer.");
+    println!("Associated text/x-log with lazylog.");
     Ok(())
 }

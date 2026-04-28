@@ -23,7 +23,7 @@ pub fn render(
 
     // App name
     spans.push(Span::styled(
-        " tinylog ",
+        " lazylog",
         Style::default().fg(Color::Rgb(180, 220, 220)).bg(Color::Rgb(0, 80, 90)).add_modifier(Modifier::BOLD),
     ));
     spans.push(Span::raw(" "));

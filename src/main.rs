@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "tinylog", about = "Tiny portable TUI log viewer")]
+#[command(name = "lazylog", about = "Tiny portable TUI log viewer")]
 struct Cli {
     /// Log file to open
     file: Option<PathBuf>,
@@ -49,9 +49,9 @@ fn main() -> anyhow::Result<()> {
     let stdin_mode = !std::io::stdin().is_terminal() && cli.file.is_none();
 
     if !stdin_mode && cli.file.is_none() {
-        eprintln!("Usage: tinylog <file.log> [--follow]");
-        eprintln!("       tinylog register");
-        eprintln!("       cat app.log | tinylog");
+        eprintln!("Usage: lazylog <file.log> [--follow]");
+        eprintln!("       lazylog register");
+        eprintln!("       cat app.log | lazylog");
         std::process::exit(1);
     }
 
