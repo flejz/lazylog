@@ -22,6 +22,7 @@ use crate::search::SearchEngine;
 use crate::ui::{restore_terminal, setup_terminal, TerminalGuard, Tui};
 use crate::ui::searchbar::InputMode;
 use crate::ui::target_popup::TargetPopup;
+use crate::ui::column_popup::ColumnPopup;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum KeyState {
@@ -95,6 +96,10 @@ pub struct AppState {
     pub dedup_enabled: bool,
 
     pub target_popup: Option<TargetPopup>,
+
+    pub json_fields: Vec<String>,    // discovered non-standard field names
+    pub json_columns: Vec<String>,   // active column selection (ordered)
+    pub column_popup: Option<ColumnPopup>,
 
     pub worker_cmd_tx: Sender<WorkerCmd>,
     pub filter_rx: Receiver<FilterMsg>,
@@ -374,6 +379,9 @@ pub fn run(args: Args) -> Result<()> {
         context_mode: false,
         context_size: 5,
         target_popup: None,
+        json_fields: Vec::new(),
+        json_columns: Vec::new(),
+        column_popup: None,
         key_state: KeyState::Normal,
         input_mode: InputMode::Normal,
         input_buf: String::new(),
@@ -452,7 +460,7 @@ fn event_loop(app: &mut AppState, terminal: &mut Tui) -> Result<()> {
                 frame, chunks[0], fname, cur_line, total,
                 app.follow_mode, prog, &app.filter_state, &app.registry,
                 app.dedup_enabled,
-                app.context_mode, app.context_size,
+                app.context_mode, app.context_size, &app.json_columns,
             );
 
             let context_lines: std::collections::HashSet<u64> = if app.context_mode {
@@ -472,6 +480,7 @@ fn event_loop(app: &mut AppState, terminal: &mut Tui) -> Result<()> {
             crate::ui::viewport::render(
                 frame, chunks[1], &visible, Some(app.selected),
                 app.search_query.as_ref(), active_match, &context_lines,
+                &app.json_columns,
             );
 
             let search_pat = app.search_query.as_ref().map(|q| q.pattern.as_str()).unwrap_or("");
@@ -485,6 +494,9 @@ fn event_loop(app: &mut AppState, terminal: &mut Tui) -> Result<()> {
             // Popup overlay (rendered last, on top)
             if let Some(ref popup) = app.target_popup {
                 crate::ui::target_popup::render(frame, area, popup);
+            }
+            if let Some(ref popup) = app.column_popup {
+                crate::ui::column_popup::render(frame, area, popup);
             }
         })?;
 
@@ -500,7 +512,13 @@ fn event_loop(app: &mut AppState, terminal: &mut Tui) -> Result<()> {
 }
 
 fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
-    // Popup takes priority — never propagates quit signal
+    // Column popup takes priority
+    if app.column_popup.is_some() {
+        handle_column_popup_key(app, key);
+        return false;
+    }
+
+    // Target popup takes priority — never propagates quit signal
     if app.target_popup.is_some() {
         handle_popup_key(app, key);
         return false;
@@ -633,6 +651,15 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
             app.dedup_enabled = !app.dedup_enabled;
         }
 
+        KeyCode::Char('F') => {
+            if app.format == FormatHint::Json {
+                if app.json_fields.is_empty() {
+                    app.json_fields = discover_json_fields(&app);
+                }
+                app.column_popup = Some(ColumnPopup::new(&app.json_fields, &app.json_columns));
+            }
+        }
+
         KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
             let key_idx = (c as u8 - b'0') as usize;
             let registry = app.registry.clone();
@@ -694,6 +721,48 @@ fn collect_targets(app: &AppState) -> Vec<String> {
         }
     }
     set.into_iter().collect()
+}
+
+fn discover_json_fields(app: &AppState) -> Vec<String> {
+    use std::collections::BTreeSet;
+    const EXCLUDE: &[&str] = &[
+        "level", "severity", "lvl", "msg", "message", "body",
+        "timestamp", "time", "ts", "target", "module",
+        "loglevel", "@timestamp", "datetime", "logger", "fields",
+    ];
+    let mut set = BTreeSet::new();
+    let limit = app.buffer.line_count().min(500);
+    for ln in 0..limit {
+        let Some(bytes) = app.buffer.read_line(ln) else { continue };
+        if bytes.first() != Some(&b'{') { continue }
+        let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) else { continue };
+        if let Some(obj) = v.as_object() {
+            for key in obj.keys() {
+                if !EXCLUDE.contains(&key.as_str()) {
+                    set.insert(key.clone());
+                }
+            }
+        }
+    }
+    set.into_iter().collect()
+}
+
+fn handle_column_popup_key(app: &mut AppState, key: crossterm::event::KeyEvent) -> bool {
+    let Some(ref mut popup) = app.column_popup else { return false };
+    let visible_rows = 20usize;
+    match key.code {
+        KeyCode::Esc => { app.column_popup = None; }
+        KeyCode::Enter => {
+            let cols = popup.applied();
+            app.json_columns = cols;
+            app.column_popup = None;
+        }
+        KeyCode::Char(' ') => { popup.toggle_cursor(); }
+        KeyCode::Up   | KeyCode::Char('k') => { popup.move_up(); }
+        KeyCode::Down | KeyCode::Char('j') => { popup.move_down(visible_rows); }
+        _ => {}
+    }
+    true
 }
 
 /// Returns true if the key was consumed by the popup.

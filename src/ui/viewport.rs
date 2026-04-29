@@ -5,6 +5,7 @@ use ratatui::{
     widgets::{Block, List, ListItem},
     Frame,
 };
+use serde_json::Value;
 use crate::parser::{LogLevel, LogLine};
 use crate::search::query::SearchQuery;
 
@@ -23,15 +24,85 @@ pub fn render(
     query: Option<&SearchQuery>,
     active_match: Option<(u64, usize, usize)>,
     context_lines: &std::collections::HashSet<u64>,
+    json_columns: &[String],
 ) {
     let items: Vec<ListItem> = lines
         .iter()
         .enumerate()
-        .map(|(i, (line, count))| render_line(line, *count, i == selected_idx.unwrap_or(usize::MAX), query, active_match, context_lines))
+        .map(|(i, (line, count))| render_line(line, *count, i == selected_idx.unwrap_or(usize::MAX), query, active_match, context_lines, json_columns))
         .collect();
 
     let list = List::new(items).block(Block::default());
     frame.render_widget(list, area);
+}
+
+fn truncate_col(s: &str) -> String {
+    let max = 17usize;
+    if s.chars().count() > max {
+        let truncated: String = s.chars().take(max).collect();
+        format!("{}…", truncated)
+    } else {
+        s.to_owned()
+    }
+}
+
+fn render_target_message(
+    spans: &mut Vec<Span<'static>>,
+    line: &LogLine,
+    bg: Color,
+    query: Option<&SearchQuery>,
+    active_match: Option<(u64, usize, usize)>,
+) {
+    // Target/crate
+    if let Some(ref target) = line.target {
+        let t = if target.len() > 24 {
+            format!("…{} ", &target[target.len()-23..])
+        } else {
+            format!("{:24} ", target)
+        };
+        spans.push(Span::styled(t, Style::default().fg(Color::Rgb(90, 90, 100)).bg(bg)));
+    } else {
+        spans.push(Span::styled(format!("{:25}", ""), Style::default().bg(bg)));
+    }
+
+    // Message with search highlighting
+    let msg = line.display_message();
+    let msg_str = if msg.len() > 200 {
+        format!("{}…", &msg[..199])
+    } else {
+        msg.into_owned()
+    };
+
+    if let Some(q) = query {
+        let is_active_line = active_match.map(|(ln, _, _)| ln == line.line_no).unwrap_or(false);
+        let all_matches = q.find_all(msg_str.as_bytes());
+
+        if all_matches.is_empty() {
+            spans.push(Span::styled(msg_str, Style::default().bg(bg)));
+        } else {
+            let (match_bg, match_fg) = if is_active_line {
+                (MATCH_ACTIVE_BG, MATCH_ACTIVE_FG)
+            } else {
+                (MATCH_DIM_BG, MATCH_DIM_FG)
+            };
+            let mut pos = 0usize;
+            for (start, end) in all_matches {
+                if pos < start {
+                    spans.push(Span::styled(msg_str[pos..start].to_owned(), Style::default().bg(bg)));
+                }
+                spans.push(Span::styled(
+                    msg_str[start..end].to_owned(),
+                    Style::default().fg(match_fg).bg(match_bg),
+                ));
+                pos = end;
+            }
+            if pos < msg_str.len() {
+                spans.push(Span::styled(msg_str[pos..].to_owned(), Style::default().bg(bg)));
+            }
+        }
+    } else {
+        spans.push(Span::styled(msg_str, Style::default().bg(bg)));
+    }
 }
 
 fn render_line(
@@ -41,6 +112,7 @@ fn render_line(
     query: Option<&SearchQuery>,
     active_match: Option<(u64, usize, usize)>,
     context_lines: &std::collections::HashSet<u64>,
+    json_columns: &[String],
 ) -> ListItem<'static> {
     let is_active_line = active_match.map(|(ln, _, _)| ln == line.line_no).unwrap_or(false);
     let is_context_line = !context_lines.is_empty() && context_lines.contains(&line.line_no);
@@ -101,56 +173,29 @@ fn render_line(
         Style::default().fg(level_color).add_modifier(Modifier::BOLD).bg(bg),
     ));
 
-    // Target/crate
-    if let Some(ref target) = line.target {
-        let t = if target.len() > 24 {
-            format!("…{} ", &target[target.len()-23..])
-        } else {
-            format!("{:24} ", target)
-        };
-        spans.push(Span::styled(t, Style::default().fg(Color::Rgb(90, 90, 100)).bg(bg)));
-    } else {
-        spans.push(Span::styled(format!("{:25}", ""), Style::default().bg(bg)));
-    }
-
-    // Message with search highlighting
-    let msg = line.display_message();
-    let msg_str = if msg.len() > 200 {
-        format!("{}…", &msg[..199])
-    } else {
-        msg.into_owned()
-    };
-
-    if let Some(q) = query {
-        let is_active_line = active_match.map(|(ln, _, _)| ln == line.line_no).unwrap_or(false);
-        let all_matches = q.find_all(msg_str.as_bytes());
-
-        if all_matches.is_empty() {
-            spans.push(Span::styled(msg_str, Style::default().bg(bg)));
-        } else {
-            // Active line: bright highlight; other match lines: dim
-            let (match_bg, match_fg) = if is_active_line {
-                (MATCH_ACTIVE_BG, MATCH_ACTIVE_FG)
-            } else {
-                (MATCH_DIM_BG, MATCH_DIM_FG)
-            };
-            let mut pos = 0usize;
-            for (start, end) in all_matches {
-                if pos < start {
-                    spans.push(Span::styled(msg_str[pos..start].to_owned(), Style::default().bg(bg)));
+    if !json_columns.is_empty() && line.raw.first() == Some(&b'{') {
+        // Try JSON extraction
+        if let Ok(v) = serde_json::from_slice::<Value>(&line.raw) {
+            if let Some(obj) = v.as_object() {
+                for col in json_columns {
+                    let val = match obj.get(col) {
+                        Some(Value::String(s)) => truncate_col(s),
+                        Some(other) => truncate_col(&other.to_string()),
+                        None => truncate_col(""),
+                    };
+                    spans.push(Span::styled(
+                        format!("{:18} ", val),
+                        Style::default().fg(Color::Rgb(160, 180, 200)).bg(bg),
+                    ));
                 }
-                spans.push(Span::styled(
-                    msg_str[start..end].to_owned(),
-                    Style::default().fg(match_fg).bg(match_bg),
-                ));
-                pos = end;
+            } else {
+                render_target_message(&mut spans, line, bg, query, active_match);
             }
-            if pos < msg_str.len() {
-                spans.push(Span::styled(msg_str[pos..].to_owned(), Style::default().bg(bg)));
-            }
+        } else {
+            render_target_message(&mut spans, line, bg, query, active_match);
         }
     } else {
-        spans.push(Span::styled(msg_str, Style::default().bg(bg)));
+        render_target_message(&mut spans, line, bg, query, active_match);
     }
 
     ListItem::new(Line::from(spans))
