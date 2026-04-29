@@ -118,6 +118,8 @@ pub struct AppState {
     pub search_history: std::collections::VecDeque<String>,
     pub search_history_idx: Option<usize>,
 
+    pub h_scroll: u16,
+
     pub help_open: bool,
     pub help_popup: Option<HelpPopup>,
     pub show_line_numbers: bool,
@@ -125,6 +127,12 @@ pub struct AppState {
 
     pub histogram: Vec<u16>,
     pub histogram_dirty: bool,
+
+    pub config: crate::config::AppConfig,
+
+    pub preset_name_input: String,
+    pub preset_load_popup: Option<Vec<crate::presets::FilterPreset>>,
+    pub preset_load_cursor: usize,
 
     pub worker_cmd_tx: Sender<WorkerCmd>,
     pub filter_rx: Receiver<FilterMsg>,
@@ -170,9 +178,13 @@ impl AppState {
     fn goto_bottom(&mut self) {
         let total = self.visible_line_count();
         self.viewport_top = total.saturating_sub(self.viewport_height as u64);
+        self.h_scroll = 0;
     }
 
-    fn goto_top(&mut self) { self.viewport_top = 0; }
+    fn goto_top(&mut self) {
+        self.viewport_top = 0;
+        self.h_scroll = 0;
+    }
     fn half_page(&self) -> u64 { (self.viewport_height as u64 / 2).max(1) }
     fn full_page(&self) -> u64 { (self.viewport_height as u64).saturating_sub(1).max(1) }
 
@@ -206,6 +218,7 @@ impl AppState {
         let half = self.half_page();
         self.viewport_top = logical.saturating_sub(half);
         self.ensure_viewport_valid();
+        self.h_scroll = 0;
     }
 
     const SEARCH_LIMIT: usize = 9_999;
@@ -269,6 +282,7 @@ impl AppState {
         self.filter_generation += 1;
         self.filter_computing = true;
         self.filter_view.clear();
+        self.h_scroll = 0;
 
         let source = match (&self.buffer, &self.file_path) {
             (BufferKind::Ring(rb), _) => {
@@ -340,6 +354,7 @@ pub struct Args {
     pub file_paths: Vec<PathBuf>,
     pub follow: bool,
     pub stdin_mode: bool,
+    pub config_path: Option<PathBuf>,
 }
 
 /// Convert "YYYY-MM-DDTHH:MM:SS" key to a pseudo-epoch in seconds.
@@ -523,12 +538,17 @@ pub fn run(args: Args) -> Result<()> {
         bookmarks: std::collections::BTreeSet::new(),
         search_history: std::collections::VecDeque::new(),
         search_history_idx: None,
+        h_scroll: 0,
         help_open: false,
         help_popup: None,
         show_line_numbers: false,
         word_wrap: false,
         histogram: Vec::new(),
         histogram_dirty: true,
+        config: crate::config::AppConfig::load(args.config_path.as_deref()),
+        preset_name_input: String::new(),
+        preset_load_popup: None,
+        preset_load_cursor: 0,
         key_state: KeyState::Normal,
         input_mode: InputMode::Normal,
         input_buf: String::new(),
@@ -862,6 +882,20 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
             }
             return false;
         }
+        InputMode::ExportPath => {
+            match key.code {
+                KeyCode::Enter => {
+                    let path = app.input_buf.drain(..).collect::<String>();
+                    app.input_mode = InputMode::Normal;
+                    export_filtered_view(app, &path);
+                }
+                KeyCode::Esc       => { app.input_buf.clear(); app.input_mode = InputMode::Normal; }
+                KeyCode::Backspace => { app.input_buf.pop(); }
+                KeyCode::Char(c)   => { app.input_buf.push(c); }
+                _ => {}
+            }
+            return false;
+        }
         InputMode::Normal => {}
     }
 
@@ -911,6 +945,9 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
         KeyCode::Char('b') if ctrl => { let p = app.full_page(); app.scroll_up(p); }
         KeyCode::PageDown => { let p = app.full_page(); app.scroll_down(p); }
         KeyCode::PageUp   => { let p = app.full_page(); app.scroll_up(p); }
+
+        KeyCode::Left  => { app.h_scroll = app.h_scroll.saturating_sub(8); }
+        KeyCode::Right => { app.h_scroll = (app.h_scroll + 8).min(500); }
 
         KeyCode::Char('g') => { app.key_state = KeyState::PendingG; }
         KeyCode::Char('G') => app.goto_bottom(),

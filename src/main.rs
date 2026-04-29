@@ -2,10 +2,12 @@
 
 mod app;
 mod buffer;
+mod config;
 mod filter;
 mod index;
 mod parser;
 mod poller;
+mod presets;
 mod register;
 mod search;
 mod time_parse;
@@ -30,6 +32,10 @@ struct Cli {
     /// Force log format (auto-detected by default)
     #[arg(long, value_name = "json|text")]
     format: Option<String>,
+
+    /// Path to a TOML config file. Defaults to <config_dir>/lazylog/config.toml.
+    #[arg(long, value_name = "FILE")]
+    config: Option<PathBuf>,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -61,5 +67,6 @@ fn main() -> anyhow::Result<()> {
         file_paths: cli.files,
         follow: cli.follow,
         stdin_mode,
+        config_path: cli.config,
     })
 }
