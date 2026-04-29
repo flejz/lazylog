@@ -20,6 +20,7 @@ pub fn render(
     registry: &LevelRegistry,
     context_mode: bool,
     context_size: usize,
+    json_columns: &[String],
 ) {
     let mut spans: Vec<Span> = Vec::new();
 
@@ -97,6 +98,15 @@ pub fn render(
             format!("{} +{}", filter.crate_prefixes[0], filter.crate_prefixes.len() - 1)
         };
         spans.push(Span::styled(label, Style::default().fg(Color::Cyan)));
+        spans.push(Span::raw(" │ "));
+    }
+
+    // JSON columns indicator
+    if !json_columns.is_empty() {
+        spans.push(Span::styled(
+            format!("cols:{}", json_columns.len()),
+            Style::default().fg(Color::Cyan),
+        ));
         spans.push(Span::raw(" │ "));
     }
 
