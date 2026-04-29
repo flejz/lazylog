@@ -115,6 +115,9 @@ pub struct AppState {
 
     pub bookmarks: std::collections::BTreeSet<u64>,
 
+    pub search_history: std::collections::VecDeque<String>,
+    pub search_history_idx: Option<usize>,
+
     pub help_open: bool,
     pub help_popup: Option<HelpPopup>,
     pub show_line_numbers: bool,
@@ -518,6 +521,8 @@ pub fn run(args: Args) -> Result<()> {
         json_popup: None,
         stats_popup: None,
         bookmarks: std::collections::BTreeSet::new(),
+        search_history: std::collections::VecDeque::new(),
+        search_history_idx: None,
         help_open: false,
         help_popup: None,
         show_line_numbers: false,
@@ -551,12 +556,30 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
+fn maybe_decompress(path: &PathBuf) -> Result<std::borrow::Cow<'_, PathBuf>> {
+    if path.extension().and_then(|e| e.to_str()) == Some("gz") {
+        use std::io::Read;
+        let f = std::fs::File::open(path)?;
+        let mut decoder = flate2::read::GzDecoder::new(f);
+        let mut data = Vec::new();
+        decoder.read_to_end(&mut data)?;
+        let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+        let tmp = std::env::temp_dir().join(stem.as_ref());
+        std::fs::write(&tmp, &data)?;
+        Ok(std::borrow::Cow::Owned(tmp))
+    } else {
+        Ok(std::borrow::Cow::Borrowed(path))
+    }
+}
+
 fn build_buffer(stdin_mode: bool, file_path: Option<&PathBuf>, follow: bool) -> Result<(BufferKind, FormatHint, u64)> {
     if stdin_mode {
         return Ok((BufferKind::Ring(RingBuffer::new(DEFAULT_RING_CAPACITY)), FormatHint::Text, 0));
     }
-    let path = file_path
+    let original = file_path
         .ok_or_else(|| anyhow::anyhow!("no file path"))?;
+    let resolved = maybe_decompress(original)?;
+    let path: &PathBuf = resolved.as_ref();
     let meta = std::fs::metadata(path)?;
     let file_len = meta.len();
 
@@ -623,6 +646,7 @@ fn event_loop(app: &mut AppState, terminal: &mut Tui) -> Result<()> {
                 app.dedup_enabled,
                 app.context_mode, app.context_size, &app.json_columns,
                 app.bookmarks.len(),
+                app.show_line_numbers,
             );
 
             let context_lines: std::collections::HashSet<u64> = if app.context_mode {
@@ -754,9 +778,43 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
                 KeyCode::Enter => {
                     let pattern = app.input_buf.drain(..).collect::<String>();
                     app.input_mode = InputMode::Normal;
-                    if !pattern.is_empty() { app.run_search(pattern, forward); }
+                    app.search_history_idx = None;
+                    if !pattern.is_empty() {
+                        // Push to front, dedup (remove existing copies first), cap at 50.
+                        app.search_history.retain(|p| p != &pattern);
+                        app.search_history.push_front(pattern.clone());
+                        while app.search_history.len() > 50 { app.search_history.pop_back(); }
+                        app.run_search(pattern, forward);
+                    }
                 }
-                KeyCode::Esc       => { app.input_buf.clear(); app.input_mode = InputMode::Normal; }
+                KeyCode::Esc => {
+                    app.input_buf.clear();
+                    app.input_mode = InputMode::Normal;
+                    app.search_history_idx = None;
+                }
+                KeyCode::Up => {
+                    if !app.search_history.is_empty() {
+                        let new_idx = match app.search_history_idx {
+                            None => 0,
+                            Some(i) => (i + 1).min(app.search_history.len() - 1),
+                        };
+                        app.search_history_idx = Some(new_idx);
+                        app.input_buf = app.search_history[new_idx].clone();
+                    }
+                }
+                KeyCode::Down => {
+                    match app.search_history_idx {
+                        None => {}
+                        Some(0) => {
+                            app.search_history_idx = None;
+                            app.input_buf.clear();
+                        }
+                        Some(i) => {
+                            app.search_history_idx = Some(i - 1);
+                            app.input_buf = app.search_history[i - 1].clone();
+                        }
+                    }
+                }
                 KeyCode::Backspace => { app.input_buf.pop(); }
                 KeyCode::Char(c)   => { app.input_buf.push(c); }
                 _ => {}
@@ -960,6 +1018,11 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
                     app.json_popup = crate::ui::json_popup::JsonPopup::new(&bytes);
                 }
             }
+        }
+
+        KeyCode::Char('s') => {
+            let lines = compute_stats_lines(app);
+            app.stats_popup = Some(crate::ui::stats_popup::StatsPopup { lines });
         }
 
         _ => {}
