@@ -120,6 +120,21 @@ pub fn render(
         spans.push(Span::raw(" │ "));
     }
 
+    // Time filter indicator
+    if filter.time_from.is_some() || filter.time_to.is_some() {
+        let from_abbrev = filter.time_from.as_deref()
+            .and_then(|s| s.get(11..16))
+            .unwrap_or("*");
+        let to_abbrev = filter.time_to.as_deref()
+            .and_then(|s| s.get(11..16))
+            .unwrap_or("*");
+        spans.push(Span::styled(
+            format!("T:{}→{}", from_abbrev, to_abbrev),
+            Style::default().fg(Color::Rgb(220, 180, 80)).add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::raw(" │ "));
+    }
+
     // Context mode indicator
     if context_mode {
         spans.push(Span::styled(

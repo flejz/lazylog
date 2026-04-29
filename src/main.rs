@@ -8,6 +8,7 @@ mod parser;
 mod poller;
 mod register;
 mod search;
+mod time_parse;
 mod ui;
 
 use std::io::IsTerminal;
