@@ -54,7 +54,7 @@ impl Default for LevelRegistry {
 }
 
 /// Active filter state. Bitmask: bit N set = level at registry index N is VISIBLE.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FilterState {
     /// Bitmask of visible levels. Bit 0 = registry.levels[0] (ERROR), etc.
     /// Bits beyond registry.levels.len() or beyond 16 are ignored.
