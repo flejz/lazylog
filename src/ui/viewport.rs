@@ -18,7 +18,7 @@ const MATCH_DIM_FG: Color = Color::Rgb(200, 170, 90);
 pub fn render(
     frame: &mut Frame,
     area: Rect,
-    lines: &[LogLine],
+    lines: &[(LogLine, usize)],
     selected_idx: Option<usize>,
     query: Option<&SearchQuery>,
     active_match: Option<(u64, usize, usize)>,
@@ -26,7 +26,7 @@ pub fn render(
     let items: Vec<ListItem> = lines
         .iter()
         .enumerate()
-        .map(|(i, line)| render_line(line, i == selected_idx.unwrap_or(usize::MAX), query, active_match))
+        .map(|(i, (line, count))| render_line(line, *count, i == selected_idx.unwrap_or(usize::MAX), query, active_match))
         .collect();
 
     let list = List::new(items).block(Block::default());
@@ -35,6 +35,7 @@ pub fn render(
 
 fn render_line(
     line: &LogLine,
+    count: usize,
     selected: bool,
     query: Option<&SearchQuery>,
     active_match: Option<(u64, usize, usize)>,
@@ -49,6 +50,14 @@ fn render_line(
     };
 
     let mut spans: Vec<Span> = Vec::new();
+
+    // Dedup badge
+    if count > 1 {
+        spans.push(Span::styled(
+            format!("[×{}] ", count),
+            Style::default().fg(Color::Rgb(150, 100, 200)).bg(bg),
+        ));
+    }
 
     // Timestamp (HH:MM:SS)
     let ts = line.timestamp.as_deref()

@@ -18,6 +18,7 @@ pub fn render(
     index_progress: Option<f64>, // None = done, Some(0.0..1.0) = indexing
     filter: &FilterState,
     registry: &LevelRegistry,
+    dedup: bool,
 ) {
     let mut spans: Vec<Span> = Vec::new();
 
@@ -60,6 +61,15 @@ pub fn render(
         spans.push(Span::styled(
             "FOLLOW",
             Style::default().fg(Color::White).bg(Color::Rgb(0, 110, 50)).add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::raw(" │ "));
+    }
+
+    // Dedup mode
+    if dedup {
+        spans.push(Span::styled(
+            "DEDUP",
+            Style::default().fg(Color::White).bg(Color::Rgb(150, 100, 200)).add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::raw(" │ "));
     }
