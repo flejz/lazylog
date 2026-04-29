@@ -24,7 +24,6 @@ pub fn render(
     json_columns: &[String],
     bookmark_count: usize,
 ) {
-    let _ = bookmark_count;
     let mut spans: Vec<Span> = Vec::new();
 
     // App name
@@ -133,6 +132,15 @@ pub fn render(
         spans.push(Span::styled(
             format!("T:{}→{}", from_abbrev, to_abbrev),
             Style::default().fg(Color::Rgb(220, 180, 80)).add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::raw(" │ "));
+    }
+
+    // Bookmark count
+    if bookmark_count > 0 {
+        spans.push(Span::styled(
+            format!("♦{}", bookmark_count),
+            Style::default().fg(Color::Rgb(220, 200, 80)).add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::raw(" │ "));
     }

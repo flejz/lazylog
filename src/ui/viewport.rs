@@ -28,11 +28,10 @@ pub fn render(
     file_info: Option<(&[String], &[ratatui::style::Color])>,
     bookmarks: &std::collections::BTreeSet<u64>,
 ) {
-    let _ = bookmarks;
     let items: Vec<ListItem> = lines
         .iter()
         .enumerate()
-        .map(|(i, (line, count))| render_line(line, *count, i == selected_idx.unwrap_or(usize::MAX), query, active_match, context_lines, json_columns, file_info))
+        .map(|(i, (line, count))| render_line(line, *count, i == selected_idx.unwrap_or(usize::MAX), query, active_match, context_lines, json_columns, file_info, bookmarks))
         .collect();
 
     let list = List::new(items).block(Block::default());
@@ -117,6 +116,7 @@ fn render_line(
     context_lines: &std::collections::HashSet<u64>,
     json_columns: &[String],
     file_info: Option<(&[String], &[ratatui::style::Color])>,
+    bookmarks: &std::collections::BTreeSet<u64>,
 ) -> ListItem<'static> {
     let is_active_line = active_match.map(|(ln, _, _)| ln == line.line_no).unwrap_or(false);
     let is_context_line = !context_lines.is_empty() && context_lines.contains(&line.line_no);
@@ -139,6 +139,18 @@ fn render_line(
         Span::styled("  ", Style::default().bg(bg))
     };
     spans.push(marker);
+
+    // Bookmark gutter — only present when any bookmarks exist
+    if !bookmarks.is_empty() {
+        if bookmarks.contains(&line.line_no) {
+            spans.push(Span::styled(
+                "♦ ",
+                Style::default().fg(Color::Rgb(220, 200, 80)).bg(bg).add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            spans.push(Span::styled("  ", Style::default().bg(bg)));
+        }
+    }
 
     // Dedup badge
     if count > 1 {
