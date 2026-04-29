@@ -672,6 +672,9 @@ fn event_loop(app: &mut AppState, terminal: &mut Tui) -> Result<()> {
             if let Some(ref popup) = app.json_popup {
                 crate::ui::json_popup::render(frame, area, popup);
             }
+            if let Some(ref popup) = app.stats_popup {
+                crate::ui::stats_popup::render(frame, area, popup);
+            }
             if app.help_open {
                 let popup = app.help_popup.clone().unwrap_or_else(HelpPopup::new);
                 crate::ui::help_popup::render(frame, area, &popup);
@@ -725,6 +728,14 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
                 if let Some(ref mut p) = app.json_popup { p.scroll_up(); }
             }
             _ => {}
+        }
+        return false;
+    }
+
+    // Stats popup — Esc closes
+    if app.stats_popup.is_some() {
+        if matches!(key.code, KeyCode::Esc | KeyCode::Char('s') | KeyCode::Char('q')) {
+            app.stats_popup = None;
         }
         return false;
     }
@@ -860,6 +871,35 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
 
         KeyCode::Char('D') => {
             app.dedup_enabled = !app.dedup_enabled;
+        }
+
+        KeyCode::Char('y') => {
+            let phys = app.logical_to_physical(app.viewport_top);
+            if let Some(bytes) = app.buffer.read_line(phys) {
+                if let Ok(text) = String::from_utf8(bytes) {
+                    if let Ok(mut ctx) = arboard::Clipboard::new() {
+                        let _ = ctx.set_text(text);
+                    }
+                }
+            }
+        }
+
+        KeyCode::Char('Y') => {
+            let total = app.visible_line_count();
+            let limit = total.min(10_000);
+            let mut out = String::new();
+            for logical in 0..limit {
+                let phys = app.logical_to_physical(logical);
+                if let Some(bytes) = app.buffer.read_line(phys) {
+                    if let Ok(s) = std::str::from_utf8(&bytes) {
+                        out.push_str(s);
+                        out.push('\n');
+                    }
+                }
+            }
+            if let Ok(mut ctx) = arboard::Clipboard::new() {
+                let _ = ctx.set_text(out);
+            }
         }
 
         KeyCode::Char('F') => {
@@ -1234,4 +1274,72 @@ fn drain_poller(app: &mut AppState) {
             }
         }
     }
+}
+
+/// Build the human-readable stats lines for the stats popup.
+/// Scans up to 100k lines for performance on large logs.
+fn compute_stats_lines(app: &AppState) -> Vec<String> {
+    use std::collections::HashMap;
+    let total = app.buffer.line_count();
+    let scan_limit = total.min(100_000);
+
+    let mut level_counts: HashMap<crate::parser::LogLevel, u64> = HashMap::new();
+    let mut target_counts: HashMap<String, u64> = HashMap::new();
+
+    for ln in 0..scan_limit {
+        let Some(bytes) = app.buffer.read_line(ln) else { continue };
+        if bytes.is_empty() { continue }
+        let log_line = parse_line(&bytes, ln, app.format);
+        if let Some(level) = log_line.level {
+            *level_counts.entry(level).or_insert(0) += 1;
+        }
+        if let Some(target) = log_line.target {
+            *target_counts.entry(target).or_insert(0) += 1;
+        }
+    }
+
+    let filtered_count = if app.filter_view.is_empty() {
+        total
+    } else {
+        app.filter_view.len() as u64
+    };
+
+    let mut lines: Vec<String> = Vec::new();
+    lines.push(format!("Total lines:       {}", total));
+    lines.push(format!("Visible lines:     {}", filtered_count));
+    lines.push(format!(
+        "Scanned for stats: {} ({}%)",
+        scan_limit,
+        if total > 0 { scan_limit * 100 / total } else { 0 }
+    ));
+    lines.push(String::new());
+    lines.push("Levels:".to_string());
+
+    for level in app.registry.levels.iter() {
+        let count = level_counts.get(level).copied().unwrap_or(0);
+        let key_label = app.registry.key_for(level)
+            .map(|k| format!("[{}]", k))
+            .unwrap_or_else(|| "   ".to_string());
+        lines.push(format!("  {} {:6}  {}", key_label, level.as_str(), count));
+    }
+
+    lines.push(String::new());
+    lines.push("Top 5 targets:".to_string());
+
+    let mut tlist: Vec<(String, u64)> = target_counts.into_iter().collect();
+    tlist.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    if tlist.is_empty() {
+        lines.push("  (no targets discovered)".to_string());
+    } else {
+        for (name, count) in tlist.into_iter().take(5) {
+            let display = if name.len() > 40 {
+                format!("…{}", &name[name.len() - 39..])
+            } else {
+                name
+            };
+            lines.push(format!("  {:6}  {}", count, display));
+        }
+    }
+
+    lines
 }

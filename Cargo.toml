@@ -12,6 +12,7 @@ regex               = "1"
 serde_json          = { version = "1", default-features = false, features = ["std"] }
 anyhow              = "1"
 clap                = { version = "4", features = ["derive"] }
+arboard             = "3"
 
 [target.'cfg(windows)'.dependencies]
 winreg              = "0.52"
