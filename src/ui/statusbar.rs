@@ -18,6 +18,8 @@ pub fn render(
     index_progress: Option<f64>, // None = done, Some(0.0..1.0) = indexing
     filter: &FilterState,
     registry: &LevelRegistry,
+    context_mode: bool,
+    context_size: usize,
 ) {
     let mut spans: Vec<Span> = Vec::new();
 
@@ -95,6 +97,15 @@ pub fn render(
             format!("{} +{}", filter.crate_prefixes[0], filter.crate_prefixes.len() - 1)
         };
         spans.push(Span::styled(label, Style::default().fg(Color::Cyan)));
+        spans.push(Span::raw(" │ "));
+    }
+
+    // Context mode indicator
+    if context_mode {
+        spans.push(Span::styled(
+            format!("CTX:±{}", context_size),
+            Style::default().fg(Color::Rgb(80, 160, 80)),
+        ));
         spans.push(Span::raw(" │ "));
     }
 

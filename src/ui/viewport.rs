@@ -22,11 +22,12 @@ pub fn render(
     selected_idx: Option<usize>,
     query: Option<&SearchQuery>,
     active_match: Option<(u64, usize, usize)>,
+    context_lines: &std::collections::HashSet<u64>,
 ) {
     let items: Vec<ListItem> = lines
         .iter()
         .enumerate()
-        .map(|(i, line)| render_line(line, i == selected_idx.unwrap_or(usize::MAX), query, active_match))
+        .map(|(i, line)| render_line(line, i == selected_idx.unwrap_or(usize::MAX), query, active_match, context_lines))
         .collect();
 
     let list = List::new(items).block(Block::default());
@@ -38,10 +39,14 @@ fn render_line(
     selected: bool,
     query: Option<&SearchQuery>,
     active_match: Option<(u64, usize, usize)>,
+    context_lines: &std::collections::HashSet<u64>,
 ) -> ListItem<'static> {
     let is_active_line = active_match.map(|(ln, _, _)| ln == line.line_no).unwrap_or(false);
+    let is_context_line = !context_lines.is_empty() && context_lines.contains(&line.line_no);
     let bg = if selected {
         Color::Rgb(45, 45, 55)
+    } else if is_context_line {
+        Color::Rgb(18, 28, 18) // very faint green — context line
     } else if is_active_line {
         Color::Rgb(35, 28, 10) // very subtle warm tint for active match row
     } else {
@@ -49,6 +54,14 @@ fn render_line(
     };
 
     let mut spans: Vec<Span> = Vec::new();
+
+    // Context line marker — constant width to avoid alignment breaks
+    let marker = if is_context_line {
+        Span::styled("▏ ", Style::default().fg(Color::Rgb(40, 80, 40)).bg(bg))
+    } else {
+        Span::styled("  ", Style::default().bg(bg))
+    };
+    spans.push(marker);
 
     // Timestamp (HH:MM:SS)
     let ts = line.timestamp.as_deref()

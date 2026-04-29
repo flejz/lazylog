@@ -24,6 +24,7 @@ pub fn render(
     match_count: usize,
     current_match: usize,
     truncated: bool,         // true = matches capped, show "n/many"
+    context_mode: bool,
 ) {
     let content = match mode {
         InputMode::Normal => {
@@ -47,7 +48,11 @@ pub fn render(
                         Style::default().fg(Color::Rgb(120, 100, 50)),
                     ),
                     Span::styled(
-                        "  n:next  N:prev  Esc:clear",
+                        if context_mode {
+                            "  n:next  N:prev  c:context  +/-:ctx-size  Esc:clear".to_owned()
+                        } else {
+                            "  n:next  N:prev  c:context  Esc:clear".to_owned()
+                        },
                         Style::default().fg(Color::Rgb(70, 70, 80)),
                     ),
                 ])

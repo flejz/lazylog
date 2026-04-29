@@ -85,6 +85,9 @@ pub struct AppState {
     pub search_cursor: usize,
     pub search_truncated: bool, // >SEARCH_LIMIT matches found
 
+    pub context_mode: bool,
+    pub context_size: usize, // default 5
+
     pub key_state: KeyState,
     pub input_mode: InputMode,
     pub input_buf: String,
@@ -201,6 +204,7 @@ impl AppState {
         self.search_matches.clear();
         self.search_cursor = 0;
         self.search_truncated = false;
+        self.context_mode = false;
     }
 
     /// Returns the active match (line_no, byte_start, byte_end) if any.
@@ -348,6 +352,8 @@ pub fn run(args: Args) -> Result<()> {
         search_matches: Vec::new(),
         search_cursor: 0,
         search_truncated: false,
+        context_mode: false,
+        context_size: 5,
         target_popup: None,
         key_state: KeyState::Normal,
         input_mode: InputMode::Normal,
@@ -426,13 +432,26 @@ fn event_loop(app: &mut AppState, terminal: &mut Tui) -> Result<()> {
             crate::ui::statusbar::render(
                 frame, chunks[0], fname, cur_line, total,
                 app.follow_mode, prog, &app.filter_state, &app.registry,
+                app.context_mode, app.context_size,
             );
+
+            let context_lines: std::collections::HashSet<u64> = if app.context_mode {
+                app.search_matches.iter()
+                    .flat_map(|&(ln, _, _)| {
+                        let lo = ln.saturating_sub(app.context_size as u64);
+                        let hi = ln + app.context_size as u64;
+                        lo..=hi
+                    })
+                    .collect()
+            } else {
+                std::collections::HashSet::new()
+            };
 
             let visible = app.visible_lines();
             let active_match = app.active_match();
             crate::ui::viewport::render(
                 frame, chunks[1], &visible, Some(app.selected),
-                app.search_query.as_ref(), active_match,
+                app.search_query.as_ref(), active_match, &context_lines,
             );
 
             let search_pat = app.search_query.as_ref().map(|q| q.pattern.as_str()).unwrap_or("");
@@ -440,6 +459,7 @@ fn event_loop(app: &mut AppState, terminal: &mut Tui) -> Result<()> {
                 frame, chunks[2], &app.input_mode, &app.input_buf,
                 search_pat,
                 app.search_matches.len(), app.search_cursor, app.search_truncated,
+                app.context_mode,
             );
 
             // Popup overlay (rendered last, on top)
@@ -548,6 +568,22 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
         KeyCode::Char('q') | KeyCode::Char('Q') => return true,
         KeyCode::Char('c') if ctrl => return true,
         KeyCode::Esc => { app.clear_search(); }
+
+        KeyCode::Char('c') => {
+            if app.search_query.is_some() {
+                app.context_mode = !app.context_mode;
+            }
+        }
+        KeyCode::Char('+') | KeyCode::Char('=') => {
+            if app.search_query.is_some() {
+                app.context_size = (app.context_size + 1).min(20);
+            }
+        }
+        KeyCode::Char('-') => {
+            if app.search_query.is_some() {
+                app.context_size = app.context_size.saturating_sub(1).max(1);
+            }
+        }
 
         KeyCode::Char('j') | KeyCode::Down  => app.scroll_down(1),
         KeyCode::Char('k') | KeyCode::Up    => app.scroll_up(1),
