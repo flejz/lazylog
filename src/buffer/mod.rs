@@ -1,6 +1,7 @@
 pub mod mmap;
 pub mod chunked;
 pub mod ring;
+pub mod multi;
 
 /// Line content returned by buffers. Avoids copying when possible.
 pub type LineBytes = Vec<u8>;

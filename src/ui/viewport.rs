@@ -25,11 +25,12 @@ pub fn render(
     active_match: Option<(u64, usize, usize)>,
     context_lines: &std::collections::HashSet<u64>,
     json_columns: &[String],
+    file_info: Option<(&[String], &[ratatui::style::Color])>,
 ) {
     let items: Vec<ListItem> = lines
         .iter()
         .enumerate()
-        .map(|(i, (line, count))| render_line(line, *count, i == selected_idx.unwrap_or(usize::MAX), query, active_match, context_lines, json_columns))
+        .map(|(i, (line, count))| render_line(line, *count, i == selected_idx.unwrap_or(usize::MAX), query, active_match, context_lines, json_columns, file_info))
         .collect();
 
     let list = List::new(items).block(Block::default());
@@ -113,6 +114,7 @@ fn render_line(
     active_match: Option<(u64, usize, usize)>,
     context_lines: &std::collections::HashSet<u64>,
     json_columns: &[String],
+    file_info: Option<(&[String], &[ratatui::style::Color])>,
 ) -> ListItem<'static> {
     let is_active_line = active_match.map(|(ln, _, _)| ln == line.line_no).unwrap_or(false);
     let is_context_line = !context_lines.is_empty() && context_lines.contains(&line.line_no);
@@ -157,6 +159,18 @@ fn render_line(
         format!("{:8} ", ts),
         Style::default().fg(Color::Rgb(90, 90, 100)).bg(bg),
     ));
+
+    // Source file badge (multi-file mode)
+    if let Some((names, colors)) = file_info {
+        let idx = line.file_idx.min(colors.len().saturating_sub(1));
+        let name = names.get(line.file_idx).map(|n| {
+            if n.len() > 10 { format!("…{}", &n[n.len()-9..]) } else { format!("{:10}", n) }
+        }).unwrap_or_else(|| format!("{:10}", "?"));
+        spans.push(Span::styled(
+            format!("{} ", name),
+            Style::default().fg(colors[idx]).bg(bg),
+        ));
+    }
 
     // Level badge
     let (level_str, level_color) = match line.level {

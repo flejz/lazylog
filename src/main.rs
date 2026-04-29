@@ -19,8 +19,9 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(name = "lazylog", about = "Tiny portable TUI log viewer for any log format")]
 struct Cli {
-    /// Log file to open
-    file: Option<PathBuf>,
+    /// Log files to open (multiple files merged chronologically)
+    #[arg(value_name = "FILE")]
+    files: Vec<PathBuf>,
 
     /// Follow mode: scroll as file grows
     #[arg(short, long)]
@@ -47,17 +48,17 @@ fn main() -> anyhow::Result<()> {
         return register::register();
     }
 
-    let stdin_mode = !std::io::stdin().is_terminal() && cli.file.is_none();
+    let stdin_mode = !std::io::stdin().is_terminal() && cli.files.is_empty();
 
-    if !stdin_mode && cli.file.is_none() {
-        eprintln!("Usage: lazylog <file.log> [--follow]");
+    if !stdin_mode && cli.files.is_empty() {
+        eprintln!("Usage: lazylog <file.log> [file2.log ...] [--follow]");
         eprintln!("       lazylog register");
         eprintln!("       cat app.log | lazylog");
         std::process::exit(1);
     }
 
     app::run(app::Args {
-        file_path: cli.file,
+        file_paths: cli.files,
         follow: cli.follow,
         stdin_mode,
     })
