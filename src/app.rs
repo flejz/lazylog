@@ -22,6 +22,7 @@ use crate::search::SearchEngine;
 use crate::ui::{restore_terminal, setup_terminal, TerminalGuard, Tui};
 use crate::ui::searchbar::InputMode;
 use crate::ui::target_popup::TargetPopup;
+use crate::ui::time_popup::TimePopup;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum KeyState {
@@ -90,6 +91,7 @@ pub struct AppState {
     pub input_buf: String,
 
     pub target_popup: Option<TargetPopup>,
+    pub time_popup: Option<TimePopup>,
 
     pub worker_cmd_tx: Sender<WorkerCmd>,
     pub filter_rx: Receiver<FilterMsg>,
@@ -349,6 +351,7 @@ pub fn run(args: Args) -> Result<()> {
         search_cursor: 0,
         search_truncated: false,
         target_popup: None,
+        time_popup: None,
         key_state: KeyState::Normal,
         input_mode: InputMode::Normal,
         input_buf: String::new(),
@@ -442,9 +445,12 @@ fn event_loop(app: &mut AppState, terminal: &mut Tui) -> Result<()> {
                 app.search_matches.len(), app.search_cursor, app.search_truncated,
             );
 
-            // Popup overlay (rendered last, on top)
+            // Popup overlays (rendered last, on top)
             if let Some(ref popup) = app.target_popup {
                 crate::ui::target_popup::render(frame, area, popup);
+            }
+            if let Some(ref popup) = app.time_popup {
+                crate::ui::time_popup::render(frame, area, popup);
             }
         })?;
 
@@ -460,7 +466,13 @@ fn event_loop(app: &mut AppState, terminal: &mut Tui) -> Result<()> {
 }
 
 fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
-    // Popup takes priority — never propagates quit signal
+    // Time popup takes highest priority
+    if app.time_popup.is_some() {
+        handle_time_popup_key(app, key);
+        return false;
+    }
+
+    // Target popup takes priority — never propagates quit signal
     if app.target_popup.is_some() {
         handle_popup_key(app, key);
         return false;
@@ -588,6 +600,13 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
             open_target_popup(app);
         }
 
+        KeyCode::Char('T') => {
+            app.time_popup = Some(TimePopup::new(
+                app.filter_state.time_from.clone(),
+                app.filter_state.time_to.clone(),
+            ));
+        }
+
         KeyCode::Char(':') => {
             app.input_mode = InputMode::CommandLine;
             app.input_buf.clear();
@@ -666,6 +685,77 @@ fn handle_popup_key(app: &mut AppState, key: crossterm::event::KeyEvent) -> bool
         _ => {}
     }
     true
+}
+
+/// Scan last 100 buffer lines to find a recent parseable timestamp for relative offsets.
+/// Falls back to system time if no timestamp is found.
+fn get_now_key(app: &AppState) -> String {
+    let total = app.buffer.line_count();
+    let start = total.saturating_sub(100);
+    for ln in (start..total).rev() {
+        if let Some(bytes) = app.buffer.read_line(ln) {
+            let log_line = crate::parser::parse_line(&bytes, ln, app.format);
+            if let Some(ts) = log_line.timestamp {
+                if let Some(key) = crate::time_parse::parse_ts_key(&ts) {
+                    return key;
+                }
+            }
+        }
+    }
+    crate::time_parse::now_key()
+}
+
+fn handle_time_popup_key(app: &mut AppState, key: crossterm::event::KeyEvent) {
+    use crossterm::event::KeyModifiers;
+
+    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+
+    match key.code {
+        KeyCode::Esc => {
+            app.time_popup = None;
+        }
+        KeyCode::Enter => {
+            let (from_input, to_input) = {
+                let popup = app.time_popup.as_ref().unwrap();
+                (popup.from_input.clone(), popup.to_input.clone())
+            };
+            app.time_popup = None;
+
+            let now_key_str = get_now_key(app);
+            app.filter_state.time_from =
+                crate::time_parse::parse_user_input(&from_input, &now_key_str);
+            app.filter_state.time_to =
+                crate::time_parse::parse_user_input(&to_input, &now_key_str);
+
+            app.viewport_top = 0;
+            if !app.filter_state.is_active() {
+                app.filter_view.clear();
+            } else {
+                app.trigger_filter_recompute();
+            }
+        }
+        KeyCode::Tab => {
+            if let Some(ref mut popup) = app.time_popup {
+                popup.toggle_focus();
+            }
+        }
+        KeyCode::BackTab => {
+            if let Some(ref mut popup) = app.time_popup {
+                popup.toggle_focus();
+            }
+        }
+        KeyCode::Backspace => {
+            if let Some(ref mut popup) = app.time_popup {
+                popup.pop_char();
+            }
+        }
+        KeyCode::Char(c) if !shift || c.is_ascii_punctuation() || c.is_alphabetic() || c.is_ascii_digit() => {
+            if let Some(ref mut popup) = app.time_popup {
+                popup.push_char(c);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn drain_stdin(app: &mut AppState) {

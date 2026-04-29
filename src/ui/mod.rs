@@ -2,6 +2,7 @@ pub mod viewport;
 pub mod statusbar;
 pub mod searchbar;
 pub mod target_popup;
+pub mod time_popup;
 
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},

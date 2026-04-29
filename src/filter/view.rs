@@ -90,7 +90,8 @@ fn run_worker(cmd_rx: Receiver<WorkerCmd>, result_tx: Sender<FilterMsg>) {
                             let log_line = parse_line(&bytes, line_no as u64, format);
                             let level_ok = filter.level_visible(log_line.level, &registry);
                             let crate_ok = filter.crate_visible(log_line.target.as_deref());
-                            if level_ok && crate_ok {
+                            let time_ok = filter.time_visible(log_line.timestamp.as_deref());
+                            if level_ok && crate_ok && time_ok {
                                 matched_indices.push(line_no);
                                 total_matched += 1;
                             }
@@ -122,7 +123,8 @@ fn run_worker(cmd_rx: Receiver<WorkerCmd>, result_tx: Sender<FilterMsg>) {
                             let log_line = parse_line(bytes, line_no as u64, format);
                             let level_ok = filter.level_visible(log_line.level, &registry);
                             let crate_ok = filter.crate_visible(log_line.target.as_deref());
-                            if level_ok && crate_ok {
+                            let time_ok = filter.time_visible(log_line.timestamp.as_deref());
+                            if level_ok && crate_ok && time_ok {
                                 matched_indices.push(line_no as u32);
                                 total_matched += 1;
                             }

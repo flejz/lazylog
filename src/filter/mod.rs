@@ -1,6 +1,7 @@
 pub mod view;
 
 use crate::parser::LogLevel;
+use crate::time_parse;
 
 /// Max number of dynamically-discovered log levels that get key bindings (1-9).
 pub const MAX_KEYED_LEVELS: usize = 9;
@@ -62,6 +63,10 @@ pub struct FilterState {
     pub show_all_levels: bool,
     /// Selected target prefixes (OR logic). Empty = show all.
     pub crate_prefixes: Vec<String>,
+    /// Inclusive lower bound for timestamp filter, as "YYYY-MM-DDTHH:MM:SS".
+    pub time_from: Option<String>,
+    /// Inclusive upper bound for timestamp filter, as "YYYY-MM-DDTHH:MM:SS".
+    pub time_to: Option<String>,
 }
 
 impl Default for FilterState {
@@ -70,6 +75,8 @@ impl Default for FilterState {
             level_mask: 0xFFFF,
             show_all_levels: true,
             crate_prefixes: Vec::new(),
+            time_from: None,
+            time_to: None,
         }
     }
 }
@@ -121,7 +128,35 @@ impl FilterState {
         }
     }
 
+    /// Returns true if the log-line timestamp passes the [from, to] filter.
+    /// Lines without a parseable full timestamp (no date) always pass.
+    pub fn time_visible(&self, timestamp: Option<&str>) -> bool {
+        if self.time_from.is_none() && self.time_to.is_none() {
+            return true;
+        }
+        let ts = match timestamp {
+            Some(t) => t,
+            None => return true, // no timestamp: always pass
+        };
+        let key = match time_parse::parse_ts_key(ts) {
+            Some(k) => k,
+            None => return true, // time-only or unparseable: always pass
+        };
+        if let Some(ref from) = self.time_from {
+            if key.as_str() < from.as_str() {
+                return false;
+            }
+        }
+        if let Some(ref to) = self.time_to {
+            if key.as_str() > to.as_str() {
+                return false;
+            }
+        }
+        true
+    }
+
     pub fn is_active(&self) -> bool {
         !self.show_all_levels || !self.crate_prefixes.is_empty()
+            || self.time_from.is_some() || self.time_to.is_some()
     }
 }

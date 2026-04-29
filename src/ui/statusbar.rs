@@ -98,6 +98,21 @@ pub fn render(
         spans.push(Span::raw(" │ "));
     }
 
+    // Time filter — show HH:MM from "YYYY-MM-DDTHH:MM:SS" (chars 11..16), or "*" if unset
+    if filter.time_from.is_some() || filter.time_to.is_some() {
+        let from_abbrev = filter.time_from.as_deref()
+            .and_then(|s| s.get(11..16))
+            .unwrap_or("*");
+        let to_abbrev = filter.time_to.as_deref()
+            .and_then(|s| s.get(11..16))
+            .unwrap_or("*");
+        spans.push(Span::styled(
+            format!("T:{}→{}", from_abbrev, to_abbrev),
+            Style::default().fg(Color::Rgb(220, 180, 80)).add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::raw(" │ "));
+    }
+
     let line = Line::from(spans);
     let para = Paragraph::new(line)
         .style(Style::default().fg(Color::Rgb(170, 170, 175)).bg(Color::Rgb(28, 30, 36)));
