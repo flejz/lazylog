@@ -1,0 +1,4 @@
+{"version":"1.1","host":"example.org","short_message":"Login failed","full_message":"Authentication failed for user: alice\nIP: 192.168.1.100\nAttempt: 3 of 5","timestamp":1745913272.307,"level":4,"_user":"alice","_remote_ip":"192.168.1.100","_attempt":3}
+{"version":"1.1","host":"example.org","short_message":"Application started","timestamp":1745913200.000,"level":6,"_service":"myapp","_version":"2.3.1","_pid":1234}
+{"version":"1.1","host":"db.example.org","short_message":"Query timeout","full_message":"SELECT * FROM orders WHERE status='pending' timed out after 30s","timestamp":1745913350.512,"level":3,"_query_time_ms":30241,"_table":"orders","_db_host":"pg-primary.internal"}
+{"version":"1.1","host":"worker.example.org","short_message":"Job completed","timestamp":1745913400.000,"level":6,"_job_name":"send_email_digest","_duration_ms":1234,"_emails_sent":523}
