@@ -22,7 +22,9 @@ pub fn render(
     context_mode: bool,
     context_size: usize,
     json_columns: &[String],
+    bookmark_count: usize,
 ) {
+    let _ = bookmark_count;
     let mut spans: Vec<Span> = Vec::new();
 
     // App name

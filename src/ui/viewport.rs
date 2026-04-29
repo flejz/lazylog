@@ -26,7 +26,9 @@ pub fn render(
     context_lines: &std::collections::HashSet<u64>,
     json_columns: &[String],
     file_info: Option<(&[String], &[ratatui::style::Color])>,
+    bookmarks: &std::collections::BTreeSet<u64>,
 ) {
+    let _ = bookmarks;
     let items: Vec<ListItem> = lines
         .iter()
         .enumerate()

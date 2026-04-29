@@ -24,6 +24,7 @@ use crate::ui::searchbar::InputMode;
 use crate::ui::target_popup::TargetPopup;
 use crate::ui::column_popup::ColumnPopup;
 use crate::ui::time_popup::TimePopup;
+use crate::ui::help_popup::HelpPopup;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum KeyState {
@@ -108,6 +109,8 @@ pub struct AppState {
     pub json_fields: Vec<String>,    // discovered non-standard field names
     pub json_columns: Vec<String>,   // active column selection (ordered)
     pub column_popup: Option<ColumnPopup>,
+
+    pub json_popup: Option<crate::ui::json_popup::JsonPopup>,
 
     pub bookmarks: std::collections::BTreeSet<u64>,
 
@@ -442,6 +445,7 @@ pub fn run(args: Args) -> Result<()> {
         json_fields: Vec::new(),
         json_columns: Vec::new(),
         column_popup: None,
+        json_popup: None,
         bookmarks: std::collections::BTreeSet::new(),
         key_state: KeyState::Normal,
         input_mode: InputMode::Normal,
@@ -588,6 +592,9 @@ fn event_loop(app: &mut AppState, terminal: &mut Tui) -> Result<()> {
             if let Some(ref popup) = app.column_popup {
                 crate::ui::column_popup::render(frame, area, popup);
             }
+            if let Some(ref popup) = app.json_popup {
+                crate::ui::json_popup::render(frame, area, popup);
+            }
         })?;
 
         if event::poll(tick)? {
@@ -608,6 +615,21 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
     }
     if app.column_popup.is_some() {
         handle_column_popup_key(app, key);
+        return false;
+    }
+
+    // JSON detail popup — handled before other popups so its keys take priority
+    if app.json_popup.is_some() {
+        match key.code {
+            KeyCode::Esc => { app.json_popup = None; }
+            KeyCode::Char('j') | KeyCode::Down => {
+                if let Some(ref mut p) = app.json_popup { p.scroll_down(); }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if let Some(ref mut p) = app.json_popup { p.scroll_up(); }
+            }
+            _ => {}
+        }
         return false;
     }
 
@@ -783,6 +805,15 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
         KeyCode::Char('m') => app.toggle_bookmark(),
         KeyCode::Char('[') => app.bookmark_prev(),
         KeyCode::Char(']') => app.bookmark_next(),
+
+        KeyCode::Char('p') => {
+            if app.format == FormatHint::Json {
+                let phys = app.logical_to_physical(app.viewport_top);
+                if let Some(bytes) = app.buffer.read_line(phys) {
+                    app.json_popup = crate::ui::json_popup::JsonPopup::new(&bytes);
+                }
+            }
+        }
 
         _ => {}
     }
