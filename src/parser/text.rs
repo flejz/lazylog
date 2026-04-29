@@ -46,7 +46,7 @@ pub fn parse_text_line(raw: &[u8], line_no: u64) -> LogLine {
         let level = caps.get(2).and_then(|m| LogLevel::from_str(m.as_str()));
         let rest = caps.get(3).map(|m| m.as_str()).unwrap_or("");
         let (target, message) = split_tracing_rest(rest);
-        return LogLine { raw: raw.to_vec(), level, target, timestamp, message: Some(message), line_no };
+        return LogLine { raw: raw.to_vec(), level, target, timestamp, message: Some(message), line_no, file_idx: 0 };
     }
 
     // Try env_logger / bracket format
@@ -55,7 +55,7 @@ pub fn parse_text_line(raw: &[u8], line_no: u64) -> LogLine {
         let level = caps.get(2).and_then(|m| LogLevel::from_str(m.as_str()));
         let target = caps.get(3).map(|m| m.as_str().to_owned());
         let message = caps.get(4).map(|m| m.as_str().to_owned());
-        return LogLine { raw: raw.to_vec(), level, target, timestamp, message, line_no };
+        return LogLine { raw: raw.to_vec(), level, target, timestamp, message, line_no, file_idx: 0 };
     }
 
     // Fallback: extract level from anywhere
@@ -63,7 +63,7 @@ pub fn parse_text_line(raw: &[u8], line_no: u64) -> LogLine {
         .find(trimmed)
         .and_then(|m| LogLevel::from_str(m.as_str()));
 
-    LogLine { raw: raw.to_vec(), level, target: None, timestamp: None, message: None, line_no }
+    LogLine { raw: raw.to_vec(), level, target: None, timestamp: None, message: None, line_no, file_idx: 0 }
 }
 
 /// Parse the "rest" portion of a tracing-subscriber line:
@@ -111,7 +111,7 @@ fn is_module_path(s: &str) -> bool {
 }
 
 fn raw_line(raw: &[u8], line_no: u64) -> LogLine {
-    LogLine { raw: raw.to_vec(), level: None, target: None, timestamp: None, message: None, line_no }
+    LogLine { raw: raw.to_vec(), level: None, target: None, timestamp: None, message: None, line_no, file_idx: 0 }
 }
 
 #[cfg(test)]

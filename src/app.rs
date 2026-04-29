@@ -33,6 +33,7 @@ pub enum BufferKind {
     Mmap(MmapBuffer),
     Chunked(ChunkedBuffer),
     Ring(RingBuffer),
+    Multi(crate::buffer::multi::MultiBuffer),
 }
 
 impl Buffer for BufferKind {
@@ -41,6 +42,7 @@ impl Buffer for BufferKind {
             BufferKind::Mmap(b)    => b.read_line(line_no),
             BufferKind::Chunked(b) => b.read_line(line_no),
             BufferKind::Ring(b)    => b.read_line(line_no),
+            BufferKind::Multi(b)   => b.read_line(line_no),
         }
     }
     fn line_count(&self) -> u64 {
@@ -48,6 +50,7 @@ impl Buffer for BufferKind {
             BufferKind::Mmap(b)    => b.line_count(),
             BufferKind::Chunked(b) => b.line_count(),
             BufferKind::Ring(b)    => b.line_count(),
+            BufferKind::Multi(b)   => b.line_count(),
         }
     }
     fn byte_offset(&self, line_no: u64) -> u64 {
@@ -55,6 +58,7 @@ impl Buffer for BufferKind {
             BufferKind::Mmap(b)    => b.byte_offset(line_no),
             BufferKind::Chunked(b) => b.byte_offset(line_no),
             BufferKind::Ring(b)    => b.byte_offset(line_no),
+            BufferKind::Multi(b)   => b.byte_offset(line_no),
         }
     }
 }
@@ -88,6 +92,9 @@ pub struct AppState {
     pub key_state: KeyState,
     pub input_mode: InputMode,
     pub input_buf: String,
+
+    pub file_names: Vec<String>,
+    pub file_colors: Vec<ratatui::style::Color>,
 
     pub target_popup: Option<TargetPopup>,
 
@@ -240,7 +247,11 @@ impl AppState {
             .filter_map(|logical| {
                 let phys = self.logical_to_physical(logical);
                 let bytes = self.buffer.read_line(phys)?;
-                Some(parse_line(&bytes, phys, self.format))
+                let mut log_line = parse_line(&bytes, phys, self.format);
+                if let BufferKind::Multi(ref mb) = self.buffer {
+                    log_line.file_idx = mb.file_idx_for(phys);
+                }
+                Some(log_line)
             })
             .collect()
     }
@@ -260,10 +271,21 @@ impl AppState {
 }
 
 pub struct Args {
-    pub file_path: Option<PathBuf>,
+    pub file_paths: Vec<PathBuf>,
     pub follow: bool,
     pub stdin_mode: bool,
 }
+
+const FILE_COLORS: &[ratatui::style::Color] = &[
+    ratatui::style::Color::Cyan,
+    ratatui::style::Color::Yellow,
+    ratatui::style::Color::Green,
+    ratatui::style::Color::Magenta,
+    ratatui::style::Color::Red,
+    ratatui::style::Color::Blue,
+    ratatui::style::Color::Rgb(255, 165, 0),
+    ratatui::style::Color::Rgb(0, 200, 100),
+];
 
 pub fn run(args: Args) -> Result<()> {
     let orig_hook = std::panic::take_hook();
@@ -305,7 +327,18 @@ pub fn run(args: Args) -> Result<()> {
         None
     };
 
-    let (buffer, format, file_len) = build_buffer(&args)?;
+    // For single-file mode, extract the one path; multi-file sets file_path to None
+    let single_path: Option<PathBuf> = if args.file_paths.len() == 1 {
+        args.file_paths.first().cloned()
+    } else {
+        None
+    };
+
+    let (buffer, format, file_len) = if args.file_paths.len() > 1 {
+        build_multi_buffer(&args.file_paths)?
+    } else {
+        build_buffer(args.stdin_mode, single_path.as_ref(), args.follow)?
+    };
     let needs_index = matches!(buffer, BufferKind::Chunked(_));
 
     let (worker_cmd_tx, worker_cmd_rx) = bounded::<WorkerCmd>(16);
@@ -315,13 +348,13 @@ pub fn run(args: Args) -> Result<()> {
     FilterWorker::spawn(worker_cmd_rx, filter_tx);
 
     if needs_index {
-        if let Some(ref path) = args.file_path {
+        if let Some(ref path) = single_path {
             IndexBuilder::spawn(path.clone(), 0, 0, index_tx);
         }
     }
 
     let poller_rx = if args.follow {
-        if let Some(ref path) = args.file_path {
+        if let Some(ref path) = single_path {
             let (ptx, prx) = bounded::<FilePollEvent>(32);
             FilePoller::spawn(path.clone(), ptx, 150);
             Some(prx)
@@ -331,7 +364,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut app = AppState {
         buffer,
         format,
-        file_path: args.file_path,
+        file_path: single_path,
         file_len,
         index_done: !needs_index,
         index_progress: if needs_index { 0.0 } else { 1.0 },
@@ -348,6 +381,8 @@ pub fn run(args: Args) -> Result<()> {
         search_matches: Vec::new(),
         search_cursor: 0,
         search_truncated: false,
+        file_names: Vec::new(),
+        file_colors: Vec::new(),
         target_popup: None,
         key_state: KeyState::Normal,
         input_mode: InputMode::Normal,
@@ -360,6 +395,13 @@ pub fn run(args: Args) -> Result<()> {
         stdin_rx,
     };
 
+    // Populate file names/colors for multi-file mode
+    if let BufferKind::Multi(ref mb) = app.buffer {
+        app.file_names = mb.file_names.clone();
+        let n = mb.file_names.len().min(FILE_COLORS.len());
+        app.file_colors = FILE_COLORS[..n].to_vec();
+    }
+
     // Discover non-standard levels from first sample of lines
     app.discover_levels();
 
@@ -369,16 +411,16 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
-fn build_buffer(args: &Args) -> Result<(BufferKind, FormatHint, u64)> {
-    if args.stdin_mode {
+fn build_buffer(stdin_mode: bool, file_path: Option<&PathBuf>, follow: bool) -> Result<(BufferKind, FormatHint, u64)> {
+    if stdin_mode {
         return Ok((BufferKind::Ring(RingBuffer::new(DEFAULT_RING_CAPACITY)), FormatHint::Text, 0));
     }
-    let path = args.file_path.as_ref()
+    let path = file_path
         .ok_or_else(|| anyhow::anyhow!("no file path"))?;
     let meta = std::fs::metadata(path)?;
     let file_len = meta.len();
 
-    if file_len <= MMAP_THRESHOLD && !args.follow {
+    if file_len <= MMAP_THRESHOLD && !follow {
         if let Ok(buf) = MmapBuffer::open(path) {
             let hint = buf.read_line(0).map(|b| detect_format(&b)).unwrap_or(FormatHint::Text);
             return Ok((BufferKind::Mmap(buf), hint, file_len));
@@ -388,6 +430,13 @@ fn build_buffer(args: &Args) -> Result<(BufferKind, FormatHint, u64)> {
     let hint = peek_format(path);
     let buf = ChunkedBuffer::open(path.clone())?;
     Ok((BufferKind::Chunked(buf), hint, file_len))
+}
+
+fn build_multi_buffer(paths: &[PathBuf]) -> Result<(BufferKind, FormatHint, u64)> {
+    use crate::buffer::multi::MultiBuffer;
+    let buf = MultiBuffer::open(paths)?;
+    let hint = buf.read_line(0).map(|b| detect_format(&b)).unwrap_or(FormatHint::Text);
+    Ok((BufferKind::Multi(buf), hint, 0))
 }
 
 fn peek_format(path: &PathBuf) -> FormatHint {
@@ -415,24 +464,34 @@ fn event_loop(app: &mut AppState, terminal: &mut Tui) -> Result<()> {
 
             app.viewport_height = chunks[1].height;
 
-            let fname = app.file_path.as_ref()
-                .and_then(|p| p.file_name())
-                .and_then(|n| n.to_str())
-                .unwrap_or("<stdin>");
+            let fname = if app.file_names.len() > 1 {
+                format!("{} files", app.file_names.len())
+            } else {
+                app.file_path.as_ref()
+                    .and_then(|p| p.file_name())
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("<stdin>")
+                    .to_owned()
+            };
             let prog = if app.index_done { None } else { Some(app.index_progress) };
             let cur_line = app.logical_to_physical(app.viewport_top);
             let total = app.buffer.line_count();
 
             crate::ui::statusbar::render(
-                frame, chunks[0], fname, cur_line, total,
+                frame, chunks[0], &fname, cur_line, total,
                 app.follow_mode, prog, &app.filter_state, &app.registry,
             );
 
             let visible = app.visible_lines();
             let active_match = app.active_match();
+            let file_info = if app.file_names.is_empty() {
+                None
+            } else {
+                Some((app.file_names.as_slice(), app.file_colors.as_slice()))
+            };
             crate::ui::viewport::render(
                 frame, chunks[1], &visible, Some(app.selected),
-                app.search_query.as_ref(), active_match,
+                app.search_query.as_ref(), active_match, file_info,
             );
 
             let search_pat = app.search_query.as_ref().map(|q| q.pattern.as_str()).unwrap_or("");

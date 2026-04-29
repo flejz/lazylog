@@ -55,6 +55,8 @@ pub struct LogLine {
     pub message: Option<String>,
     /// Line number in the source file (0-based)
     pub line_no: u64,
+    /// Index of source file when multiple files are merged (0 for single-file mode)
+    pub file_idx: usize,
 }
 
 impl LogLine {

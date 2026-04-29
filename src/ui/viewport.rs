@@ -22,11 +22,12 @@ pub fn render(
     selected_idx: Option<usize>,
     query: Option<&SearchQuery>,
     active_match: Option<(u64, usize, usize)>,
+    file_info: Option<(&[String], &[ratatui::style::Color])>,
 ) {
     let items: Vec<ListItem> = lines
         .iter()
         .enumerate()
-        .map(|(i, line)| render_line(line, i == selected_idx.unwrap_or(usize::MAX), query, active_match))
+        .map(|(i, line)| render_line(line, i == selected_idx.unwrap_or(usize::MAX), query, active_match, file_info))
         .collect();
 
     let list = List::new(items).block(Block::default());
@@ -38,6 +39,7 @@ fn render_line(
     selected: bool,
     query: Option<&SearchQuery>,
     active_match: Option<(u64, usize, usize)>,
+    file_info: Option<(&[String], &[ratatui::style::Color])>,
 ) -> ListItem<'static> {
     let is_active_line = active_match.map(|(ln, _, _)| ln == line.line_no).unwrap_or(false);
     let bg = if selected {
@@ -63,6 +65,18 @@ fn render_line(
         format!("{:8} ", ts),
         Style::default().fg(Color::Rgb(90, 90, 100)).bg(bg),
     ));
+
+    // Source file badge (multi-file mode)
+    if let Some((names, colors)) = file_info {
+        let idx = line.file_idx.min(colors.len().saturating_sub(1));
+        let name = names.get(line.file_idx).map(|n| {
+            if n.len() > 10 { format!("…{}", &n[n.len()-9..]) } else { format!("{:10}", n) }
+        }).unwrap_or_else(|| format!("{:10}", "?"));
+        spans.push(Span::styled(
+            format!("{} ", name),
+            Style::default().fg(colors[idx]).bg(bg),
+        ));
+    }
 
     // Level badge
     let (level_str, level_color) = match line.level {

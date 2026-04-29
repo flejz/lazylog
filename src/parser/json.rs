@@ -23,6 +23,7 @@ pub fn parse_json_line(raw: &[u8], line_no: u64) -> Option<LogLine> {
         timestamp,
         message,
         line_no,
+        file_idx: 0,
     })
 }
 
