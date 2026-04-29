@@ -111,8 +111,17 @@ pub struct AppState {
     pub column_popup: Option<ColumnPopup>,
 
     pub json_popup: Option<crate::ui::json_popup::JsonPopup>,
+    pub stats_popup: Option<crate::ui::stats_popup::StatsPopup>,
 
     pub bookmarks: std::collections::BTreeSet<u64>,
+
+    pub help_open: bool,
+    pub help_popup: Option<HelpPopup>,
+    pub show_line_numbers: bool,
+    pub word_wrap: bool,
+
+    pub histogram: Vec<u16>,
+    pub histogram_dirty: bool,
 
     pub worker_cmd_tx: Sender<WorkerCmd>,
     pub filter_rx: Receiver<FilterMsg>,
@@ -123,7 +132,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    fn visible_line_count(&self) -> u64 {
+    pub fn visible_line_count(&self) -> u64 {
         if self.filter_view.is_empty() {
             self.buffer.line_count()
         } else {
@@ -131,7 +140,7 @@ impl AppState {
         }
     }
 
-    fn logical_to_physical(&self, logical: u64) -> u64 {
+    pub fn logical_to_physical(&self, logical: u64) -> u64 {
         if self.filter_view.is_empty() {
             logical
         } else {
@@ -330,6 +339,67 @@ pub struct Args {
     pub stdin_mode: bool,
 }
 
+/// Convert "YYYY-MM-DDTHH:MM:SS" key to a pseudo-epoch in seconds.
+/// Uses fixed 31-day months — good enough for relative bucketing within one log.
+fn ts_key_to_secs(s: &str) -> i64 {
+    if s.len() < 19 { return 0; }
+    let y: i64 = s[0..4].parse().unwrap_or(1970);
+    let mo: i64 = s[5..7].parse().unwrap_or(1);
+    let d: i64 = s[8..10].parse().unwrap_or(1);
+    let h: i64 = s[11..13].parse().unwrap_or(0);
+    let mi: i64 = s[14..16].parse().unwrap_or(0);
+    let se: i64 = s[17..19].parse().unwrap_or(0);
+    let days = y * 365 + (mo - 1) * 31 + (d - 1);
+    days * 86400 + h * 3600 + mi * 60 + se
+}
+
+/// Scan up to 50k lines, parse timestamps and bucket counts into `width` slots.
+/// Lines without a parseable full timestamp are skipped.
+pub fn recompute_histogram(app: &mut AppState, width: usize) {
+    if width == 0 {
+        app.histogram.clear();
+        app.histogram_dirty = false;
+        return;
+    }
+    let total = app.buffer.line_count();
+    if total == 0 {
+        app.histogram = vec![0u16; width];
+        app.histogram_dirty = false;
+        return;
+    }
+
+    let limit = total.min(50_000);
+    let mut secs_vec: Vec<i64> = Vec::with_capacity((limit / 2) as usize);
+    for ln in 0..limit {
+        let Some(bytes) = app.buffer.read_line(ln) else { continue };
+        let log_line = parse_line(&bytes, ln, app.format);
+        let Some(ts) = log_line.timestamp else { continue };
+        if let Some(key) = crate::time_parse::parse_ts_key(&ts) {
+            secs_vec.push(ts_key_to_secs(&key));
+        }
+    }
+
+    if secs_vec.is_empty() {
+        app.histogram = vec![0u16; width];
+        app.histogram_dirty = false;
+        return;
+    }
+
+    let min_s = *secs_vec.iter().min().unwrap();
+    let max_s = *secs_vec.iter().max().unwrap();
+    let range = (max_s - min_s).max(1);
+
+    let mut counts = vec![0u32; width];
+    for s in &secs_vec {
+        let bucket = (((s - min_s) as i128 * (width as i128 - 1)) / range as i128) as usize;
+        let bucket = bucket.min(width - 1);
+        counts[bucket] = counts[bucket].saturating_add(1);
+    }
+
+    app.histogram = counts.into_iter().map(|c| c.min(u16::MAX as u32) as u16).collect();
+    app.histogram_dirty = false;
+}
+
 const FILE_COLORS: &[ratatui::style::Color] = &[
     ratatui::style::Color::Cyan,
     ratatui::style::Color::Yellow,
@@ -446,7 +516,14 @@ pub fn run(args: Args) -> Result<()> {
         json_columns: Vec::new(),
         column_popup: None,
         json_popup: None,
+        stats_popup: None,
         bookmarks: std::collections::BTreeSet::new(),
+        help_open: false,
+        help_popup: None,
+        show_line_numbers: false,
+        word_wrap: false,
+        histogram: Vec::new(),
+        histogram_dirty: true,
         key_state: KeyState::Normal,
         input_mode: InputMode::Normal,
         input_buf: String::new(),
@@ -595,6 +672,10 @@ fn event_loop(app: &mut AppState, terminal: &mut Tui) -> Result<()> {
             if let Some(ref popup) = app.json_popup {
                 crate::ui::json_popup::render(frame, area, popup);
             }
+            if app.help_open {
+                let popup = app.help_popup.clone().unwrap_or_else(HelpPopup::new);
+                crate::ui::help_popup::render(frame, area, &popup);
+            }
         })?;
 
         if event::poll(tick)? {
@@ -609,6 +690,21 @@ fn event_loop(app: &mut AppState, terminal: &mut Tui) -> Result<()> {
 }
 
 fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
+    // Help popup takes top priority — Esc/h/q close it; other keys ignored
+    if app.help_open {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('h') | KeyCode::Char('q') => {
+                app.help_open = false;
+                app.help_popup = None;
+            }
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                return true;
+            }
+            _ => {}
+        }
+        return false;
+    }
+
     if app.time_popup.is_some() {
         handle_time_popup_key(app, key);
         return false;
@@ -805,6 +901,17 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
         KeyCode::Char('m') => app.toggle_bookmark(),
         KeyCode::Char('[') => app.bookmark_prev(),
         KeyCode::Char(']') => app.bookmark_next(),
+
+        KeyCode::Char('h') => {
+            app.help_open = !app.help_open;
+            app.help_popup = if app.help_open { Some(HelpPopup::new()) } else { None };
+        }
+        KeyCode::Char('l') => {
+            app.show_line_numbers = !app.show_line_numbers;
+        }
+        KeyCode::Char('w') => {
+            app.word_wrap = !app.word_wrap;
+        }
 
         KeyCode::Char('p') => {
             if app.format == FormatHint::Json {
