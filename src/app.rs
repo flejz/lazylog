@@ -89,6 +89,8 @@ pub struct AppState {
     pub input_mode: InputMode,
     pub input_buf: String,
 
+    pub dedup_enabled: bool,
+
     pub target_popup: Option<TargetPopup>,
 
     pub worker_cmd_tx: Sender<WorkerCmd>,
@@ -232,17 +234,33 @@ impl AppState {
         });
     }
 
-    fn visible_lines(&self) -> Vec<LogLine> {
+    fn visible_lines(&self) -> Vec<(LogLine, usize)> {
         let height = self.viewport_height as u64;
         let start = self.viewport_top;
         let end = (start + height).min(self.visible_line_count());
-        (start..end)
+        let lines: Vec<LogLine> = (start..end)
             .filter_map(|logical| {
                 let phys = self.logical_to_physical(logical);
                 let bytes = self.buffer.read_line(phys)?;
                 Some(parse_line(&bytes, phys, self.format))
             })
-            .collect()
+            .collect();
+
+        if !self.dedup_enabled {
+            lines.into_iter().map(|l| (l, 1)).collect()
+        } else {
+            let mut result: Vec<(LogLine, usize)> = Vec::new();
+            for line in lines {
+                if let Some(last) = result.last_mut() {
+                    if last.0.raw == line.raw {
+                        last.1 += 1;
+                        continue;
+                    }
+                }
+                result.push((line, 1));
+            }
+            result
+        }
     }
 
     /// Parse first N lines to discover non-standard log levels.
@@ -348,6 +366,7 @@ pub fn run(args: Args) -> Result<()> {
         search_matches: Vec::new(),
         search_cursor: 0,
         search_truncated: false,
+        dedup_enabled: false,
         target_popup: None,
         key_state: KeyState::Normal,
         input_mode: InputMode::Normal,
@@ -426,6 +445,7 @@ fn event_loop(app: &mut AppState, terminal: &mut Tui) -> Result<()> {
             crate::ui::statusbar::render(
                 frame, chunks[0], fname, cur_line, total,
                 app.follow_mode, prog, &app.filter_state, &app.registry,
+                app.dedup_enabled,
             );
 
             let visible = app.visible_lines();
@@ -571,6 +591,10 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
         KeyCode::Char('f') => {
             app.follow_mode = !app.follow_mode;
             if app.follow_mode { app.goto_bottom(); }
+        }
+
+        KeyCode::Char('D') => {
+            app.dedup_enabled = !app.dedup_enabled;
         }
 
         KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {

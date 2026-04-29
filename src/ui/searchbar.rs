@@ -53,7 +53,7 @@ pub fn render(
                 ])
             } else {
                 Line::from(Span::styled(
-                    " q:quit  /:search  f:follow  1-9:levels  t:target  gg/G:top/bot",
+                    " q:quit  /:search  f:follow  D:dedup  1-9:levels  t:target  gg/G:top/bot",
                     Style::default().fg(Color::Rgb(70, 70, 80)),
                 ))
             }
