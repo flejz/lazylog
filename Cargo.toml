@@ -16,6 +16,19 @@ clap                = { version = "4", features = ["derive"] }
 [target.'cfg(windows)'.dependencies]
 winreg              = "0.52"
 
+[package.metadata.deb]
+name = "lazylog"
+maintainer = "flejz <flejz@protonmail.com>"
+copyright = "2026, flejz"
+extended-description = "Tiny portable TUI log viewer — JSON, plain text, syslog, any format"
+depends = "$auto"
+section = "utility"
+priority = "optional"
+assets = [
+    ["target/release/lazylog", "usr/bin/", "755"],
+    ["README.md", "usr/share/doc/lazylog/README.md", "644"],
+]
+
 [profile.release]
 lto           = "fat"
 codegen-units = 1
