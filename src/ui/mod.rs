@@ -6,6 +6,7 @@ pub mod column_popup;
 pub mod time_popup;
 pub mod help_popup;
 pub mod json_popup;
+pub mod stats_popup;
 pub mod histogram;
 
 use crossterm::{
