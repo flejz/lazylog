@@ -109,6 +109,8 @@ pub struct AppState {
     pub json_columns: Vec<String>,   // active column selection (ordered)
     pub column_popup: Option<ColumnPopup>,
 
+    pub bookmarks: std::collections::BTreeSet<u64>,
+
     pub worker_cmd_tx: Sender<WorkerCmd>,
     pub filter_rx: Receiver<FilterMsg>,
     pub index_rx: Receiver<IndexMsg>,
@@ -211,6 +213,27 @@ impl AppState {
         self.search_query = Some(query);
         if let Some(&(line_no, _, _)) = self.search_matches.get(self.search_cursor) {
             self.jump_to_line(line_no);
+        }
+    }
+
+    fn toggle_bookmark(&mut self) {
+        let phys = self.logical_to_physical(self.viewport_top);
+        if !self.bookmarks.remove(&phys) {
+            self.bookmarks.insert(phys);
+        }
+    }
+
+    fn bookmark_prev(&mut self) {
+        let cur = self.logical_to_physical(self.viewport_top);
+        if let Some(&phys) = self.bookmarks.range(..cur).next_back() {
+            self.jump_to_line(phys);
+        }
+    }
+
+    fn bookmark_next(&mut self) {
+        let cur = self.logical_to_physical(self.viewport_top);
+        if let Some(&phys) = self.bookmarks.range(cur + 1..).next() {
+            self.jump_to_line(phys);
         }
     }
 
@@ -419,6 +442,7 @@ pub fn run(args: Args) -> Result<()> {
         json_fields: Vec::new(),
         json_columns: Vec::new(),
         column_popup: None,
+        bookmarks: std::collections::BTreeSet::new(),
         key_state: KeyState::Normal,
         input_mode: InputMode::Normal,
         input_buf: String::new(),
@@ -517,6 +541,7 @@ fn event_loop(app: &mut AppState, terminal: &mut Tui) -> Result<()> {
                 app.follow_mode, prog, &app.filter_state, &app.registry,
                 app.dedup_enabled,
                 app.context_mode, app.context_size, &app.json_columns,
+                app.bookmarks.len(),
             );
 
             let context_lines: std::collections::HashSet<u64> = if app.context_mode {
@@ -542,6 +567,7 @@ fn event_loop(app: &mut AppState, terminal: &mut Tui) -> Result<()> {
                 frame, chunks[1], &visible, Some(app.selected),
                 app.search_query.as_ref(), active_match, &context_lines,
                 &app.json_columns, file_info,
+                &app.bookmarks,
             );
 
             let search_pat = app.search_query.as_ref().map(|q| q.pattern.as_str()).unwrap_or("");
@@ -753,6 +779,10 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
             app.input_mode = InputMode::CommandLine;
             app.input_buf.clear();
         }
+
+        KeyCode::Char('m') => app.toggle_bookmark(),
+        KeyCode::Char('[') => app.bookmark_prev(),
+        KeyCode::Char(']') => app.bookmark_next(),
 
         _ => {}
     }

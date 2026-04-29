@@ -4,6 +4,9 @@ pub mod searchbar;
 pub mod target_popup;
 pub mod column_popup;
 pub mod time_popup;
+pub mod help_popup;
+pub mod json_popup;
+pub mod histogram;
 
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
