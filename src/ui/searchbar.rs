@@ -15,6 +15,8 @@ pub enum InputMode {
     FilterCrate,
     /// Path entry for exporting the current filtered view (impl-io feature).
     ExportPath,
+    /// Name entry for saving a filter preset (Ctrl+S).
+    PresetName,
 }
 
 pub fn render(
@@ -115,6 +117,18 @@ pub fn render(
                 Span::styled("_", Style::default().fg(Color::Cyan)),
                 Span::styled(
                     "   (Enter: write  Esc: cancel)",
+                    Style::default().fg(Color::Rgb(70, 70, 80)),
+                ),
+            ])
+        }
+
+        InputMode::PresetName => {
+            Line::from(vec![
+                Span::styled("save preset: ", Style::default().fg(Color::Rgb(180, 140, 80))),
+                Span::raw(input.to_owned()),
+                Span::styled("_", Style::default().fg(Color::Rgb(180, 140, 80))),
+                Span::styled(
+                    "   (Enter: save  Esc: cancel)",
                     Style::default().fg(Color::Rgb(70, 70, 80)),
                 ),
             ])

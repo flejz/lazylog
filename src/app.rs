@@ -666,6 +666,8 @@ fn event_loop(app: &mut AppState, terminal: &mut Tui) -> Result<()> {
                 app.dedup_enabled,
                 app.context_mode, app.context_size, &app.json_columns,
                 app.bookmarks.len(),
+                app.show_line_numbers,
+                app.word_wrap,
             );
 
             let context_lines: std::collections::HashSet<u64> = if app.context_mode {
@@ -692,6 +694,9 @@ fn event_loop(app: &mut AppState, terminal: &mut Tui) -> Result<()> {
                 app.search_query.as_ref(), active_match, &context_lines,
                 &app.json_columns, file_info,
                 &app.bookmarks,
+                app.show_line_numbers,
+                app.word_wrap,
+                app.h_scroll,
             );
 
             let search_pat = app.search_query.as_ref().map(|q| q.pattern.as_str()).unwrap_or("");
@@ -722,6 +727,9 @@ fn event_loop(app: &mut AppState, terminal: &mut Tui) -> Result<()> {
                 let popup = app.help_popup.clone().unwrap_or_else(HelpPopup::new);
                 crate::ui::help_popup::render(frame, area, &popup);
             }
+            if let Some(ref presets) = app.preset_load_popup {
+                crate::ui::preset_popup::render(frame, area, presets, app.preset_load_cursor);
+            }
         })?;
 
         if event::poll(tick)? {
@@ -745,6 +753,37 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
             }
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 return true;
+            }
+            _ => {}
+        }
+        return false;
+    }
+
+    if app.preset_load_popup.is_some() {
+        match key.code {
+            KeyCode::Esc => { app.preset_load_popup = None; }
+            KeyCode::Char('j') | KeyCode::Down => {
+                if let Some(ref presets) = app.preset_load_popup {
+                    let max = presets.len().saturating_sub(1);
+                    app.preset_load_cursor = (app.preset_load_cursor + 1).min(max);
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                app.preset_load_cursor = app.preset_load_cursor.saturating_sub(1);
+            }
+            KeyCode::Enter => {
+                if let Some(ref presets) = app.preset_load_popup {
+                    if let Some(preset) = presets.get(app.preset_load_cursor) {
+                        app.filter_state = preset.filter.clone();
+                        app.viewport_top = 0;
+                        if app.filter_state.is_active() {
+                            app.trigger_filter_recompute();
+                        } else {
+                            app.filter_view.clear();
+                        }
+                    }
+                }
+                app.preset_load_popup = None;
             }
             _ => {}
         }
@@ -887,6 +926,22 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
                     let path = app.input_buf.drain(..).collect::<String>();
                     app.input_mode = InputMode::Normal;
                     export_filtered_view(app, &path);
+                }
+                KeyCode::Esc       => { app.input_buf.clear(); app.input_mode = InputMode::Normal; }
+                KeyCode::Backspace => { app.input_buf.pop(); }
+                KeyCode::Char(c)   => { app.input_buf.push(c); }
+                _ => {}
+            }
+            return false;
+        }
+        InputMode::PresetName => {
+            match key.code {
+                KeyCode::Enter => {
+                    let name = app.input_buf.drain(..).collect::<String>();
+                    app.input_mode = InputMode::Normal;
+                    if !name.is_empty() {
+                        let _ = crate::presets::save_preset(&name, &app.filter_state);
+                    }
                 }
                 KeyCode::Esc       => { app.input_buf.clear(); app.input_mode = InputMode::Normal; }
                 KeyCode::Backspace => { app.input_buf.pop(); }
@@ -1056,6 +1111,15 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
             }
         }
 
+        KeyCode::Char('s') if ctrl => {
+            app.input_mode = InputMode::PresetName;
+            app.input_buf.clear();
+        }
+        KeyCode::Char('r') if ctrl => {
+            let presets = crate::presets::list_presets();
+            app.preset_load_popup = Some(presets);
+            app.preset_load_cursor = 0;
+        }
         KeyCode::Char('s') => {
             let lines = compute_stats_lines(app);
             app.stats_popup = Some(crate::ui::stats_popup::StatsPopup { lines });
@@ -1448,7 +1512,23 @@ fn compute_stats_lines(app: &AppState) -> Vec<String> {
     lines
 }
 
-/// Stub: pending impl-io agent's full implementation.
-fn export_filtered_view(_app: &AppState, _path: &str) {
-    // No-op stub so the build compiles; impl-io will add the real exporter.
+fn export_filtered_view(app: &AppState, path: &str) {
+    use std::io::Write;
+    let Ok(mut f) = std::fs::File::create(path) else { return };
+    let total = if app.filter_view.is_empty() {
+        app.buffer.line_count()
+    } else {
+        app.filter_view.len() as u64
+    };
+    for logical in 0..total {
+        let phys = if app.filter_view.is_empty() {
+            logical
+        } else {
+            app.filter_view.get(logical as usize).copied().unwrap_or(0) as u64
+        };
+        if let Some(bytes) = app.buffer.read_line(phys) {
+            let _ = f.write_all(&bytes);
+            let _ = f.write_all(b"\n");
+        }
+    }
 }

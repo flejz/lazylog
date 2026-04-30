@@ -8,6 +8,7 @@ pub mod help_popup;
 pub mod json_popup;
 pub mod stats_popup;
 pub mod histogram;
+pub mod preset_popup;
 
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
