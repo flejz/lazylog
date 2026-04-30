@@ -27,13 +27,18 @@ pub fn render(
     json_columns: &[String],
     file_info: Option<(&[String], &[ratatui::style::Color])>,
     bookmarks: &std::collections::BTreeSet<u64>,
+    show_line_numbers: bool,
+    word_wrap: bool,
+    h_scroll: u16,
 ) {
-    let items: Vec<ListItem> = lines
-        .iter()
-        .enumerate()
-        .map(|(i, (line, count))| render_line(line, *count, i == selected_idx.unwrap_or(usize::MAX), query, active_match, context_lines, json_columns, file_info, bookmarks))
-        .collect();
-
+    let area_width = area.width as usize;
+    let mut items: Vec<ListItem> = Vec::with_capacity(lines.len());
+    for (i, (line, count)) in lines.iter().enumerate() {
+        let selected = i == selected_idx.unwrap_or(usize::MAX);
+        for it in render_line(line, *count, selected, query, active_match, context_lines, json_columns, file_info, bookmarks, show_line_numbers, word_wrap, h_scroll, area_width) {
+            items.push(it);
+        }
+    }
     let list = List::new(items).block(Block::default());
     frame.render_widget(list, area);
 }
@@ -48,63 +53,8 @@ fn truncate_col(s: &str) -> String {
     }
 }
 
-fn render_target_message(
-    spans: &mut Vec<Span<'static>>,
-    line: &LogLine,
-    bg: Color,
-    query: Option<&SearchQuery>,
-    active_match: Option<(u64, usize, usize)>,
-) {
-    // Target/crate
-    if let Some(ref target) = line.target {
-        let t = if target.len() > 24 {
-            format!("…{} ", &target[target.len()-23..])
-        } else {
-            format!("{:24} ", target)
-        };
-        spans.push(Span::styled(t, Style::default().fg(Color::Rgb(90, 90, 100)).bg(bg)));
-    } else {
-        spans.push(Span::styled(format!("{:25}", ""), Style::default().bg(bg)));
-    }
-
-    // Message with search highlighting
-    let msg = line.display_message();
-    let msg_str = if msg.len() > 200 {
-        format!("{}…", &msg[..199])
-    } else {
-        msg.into_owned()
-    };
-
-    if let Some(q) = query {
-        let is_active_line = active_match.map(|(ln, _, _)| ln == line.line_no).unwrap_or(false);
-        let all_matches = q.find_all(msg_str.as_bytes());
-
-        if all_matches.is_empty() {
-            spans.push(Span::styled(msg_str, Style::default().bg(bg)));
-        } else {
-            let (match_bg, match_fg) = if is_active_line {
-                (MATCH_ACTIVE_BG, MATCH_ACTIVE_FG)
-            } else {
-                (MATCH_DIM_BG, MATCH_DIM_FG)
-            };
-            let mut pos = 0usize;
-            for (start, end) in all_matches {
-                if pos < start {
-                    spans.push(Span::styled(msg_str[pos..start].to_owned(), Style::default().bg(bg)));
-                }
-                spans.push(Span::styled(
-                    msg_str[start..end].to_owned(),
-                    Style::default().fg(match_fg).bg(match_bg),
-                ));
-                pos = end;
-            }
-            if pos < msg_str.len() {
-                spans.push(Span::styled(msg_str[pos..].to_owned(), Style::default().bg(bg)));
-            }
-        }
-    } else {
-        spans.push(Span::styled(msg_str, Style::default().bg(bg)));
-    }
+fn spans_text_width(spans: &[Span]) -> usize {
+    spans.iter().map(|s| s.content.chars().count()).sum()
 }
 
 fn render_line(
@@ -117,22 +67,32 @@ fn render_line(
     json_columns: &[String],
     file_info: Option<(&[String], &[ratatui::style::Color])>,
     bookmarks: &std::collections::BTreeSet<u64>,
-) -> ListItem<'static> {
+    show_line_numbers: bool,
+    word_wrap: bool,
+    h_scroll: u16,
+    area_width: usize,
+) -> Vec<ListItem<'static>> {
     let is_active_line = active_match.map(|(ln, _, _)| ln == line.line_no).unwrap_or(false);
     let is_context_line = !context_lines.is_empty() && context_lines.contains(&line.line_no);
     let bg = if selected {
         Color::Rgb(45, 45, 55)
     } else if is_context_line {
-        Color::Rgb(18, 28, 18) // very faint green — context line
+        Color::Rgb(18, 28, 18)
     } else if is_active_line {
-        Color::Rgb(35, 28, 10) // very subtle warm tint for active match row
+        Color::Rgb(35, 28, 10)
     } else {
         Color::Reset
     };
 
     let mut spans: Vec<Span> = Vec::new();
 
-    // Context line marker — constant width to avoid alignment breaks
+    if show_line_numbers {
+        spans.push(Span::styled(
+            format!("{:>6} ", line.line_no + 1),
+            Style::default().fg(Color::Rgb(90, 95, 110)).bg(bg),
+        ));
+    }
+
     let marker = if is_context_line {
         Span::styled("▏ ", Style::default().fg(Color::Rgb(40, 80, 40)).bg(bg))
     } else {
@@ -140,7 +100,6 @@ fn render_line(
     };
     spans.push(marker);
 
-    // Bookmark gutter — only present when any bookmarks exist
     if !bookmarks.is_empty() {
         if bookmarks.contains(&line.line_no) {
             spans.push(Span::styled(
@@ -152,7 +111,6 @@ fn render_line(
         }
     }
 
-    // Dedup badge
     if count > 1 {
         spans.push(Span::styled(
             format!("[×{}] ", count),
@@ -160,7 +118,6 @@ fn render_line(
         ));
     }
 
-    // Timestamp (HH:MM:SS)
     let ts = line.timestamp.as_deref()
         .map(|t| {
             let time_part = t.find('T').or_else(|| t.find(' '))
@@ -174,7 +131,6 @@ fn render_line(
         Style::default().fg(Color::Rgb(90, 90, 100)).bg(bg),
     ));
 
-    // Source file badge (multi-file mode)
     if let Some((names, colors)) = file_info {
         let idx = line.file_idx.min(colors.len().saturating_sub(1));
         let name = names.get(line.file_idx).map(|n| {
@@ -186,7 +142,6 @@ fn render_line(
         ));
     }
 
-    // Level badge
     let (level_str, level_color) = match line.level {
         Some(LogLevel::Error)     => ("ERROR", Color::Red),
         Some(LogLevel::Warn)      => ("WARN ", Color::Yellow),
@@ -201,8 +156,8 @@ fn render_line(
         Style::default().fg(level_color).add_modifier(Modifier::BOLD).bg(bg),
     ));
 
+    // JSON columns mode: render column values then early-return
     if !json_columns.is_empty() && line.raw.first() == Some(&b'{') {
-        // Try JSON extraction
         if let Ok(v) = serde_json::from_slice::<Value>(&line.raw) {
             if let Some(obj) = v.as_object() {
                 for col in json_columns {
@@ -216,15 +171,102 @@ fn render_line(
                         Style::default().fg(Color::Rgb(160, 180, 200)).bg(bg),
                     ));
                 }
-            } else {
-                render_target_message(&mut spans, line, bg, query, active_match);
+                return vec![ListItem::new(Line::from(spans))];
             }
-        } else {
-            render_target_message(&mut spans, line, bg, query, active_match);
         }
-    } else {
-        render_target_message(&mut spans, line, bg, query, active_match);
     }
 
-    ListItem::new(Line::from(spans))
+    // Build the full message text (target + message)
+    let msg = line.display_message();
+    let msg_str = if msg.len() > 500 { format!("{}…", &msg[..499]) } else { msg.into_owned() };
+    let target_str = line.target.as_deref().map(|t| {
+        if t.len() > 24 { format!("…{} ", &t[t.len()-23..]) } else { format!("{:24} ", t) }
+    }).unwrap_or_else(|| format!("{:25}", ""));
+
+    // Apply h_scroll to the message portion (skip first h_scroll chars of target+msg)
+    let scroll = h_scroll as usize;
+    let full_suffix: String = format!("{}{}", target_str, msg_str);
+    let scrolled_suffix: String = full_suffix.chars().skip(scroll).collect();
+
+    if !word_wrap || area_width == 0 {
+        // No wrap: append highlighted message to prefix spans
+        let mut out = spans;
+        append_highlighted(&mut out, &scrolled_suffix, bg, line, query, active_match);
+        return vec![ListItem::new(Line::from(out))];
+    }
+
+    // Word-wrap: compute available width for message after prefix
+    let prefix_w = spans_text_width(&spans);
+    let avail = area_width.saturating_sub(prefix_w).max(1);
+    let chars: Vec<char> = scrolled_suffix.chars().collect();
+
+    if chars.len() <= avail {
+        let mut out = spans;
+        append_highlighted(&mut out, &scrolled_suffix, bg, line, query, active_match);
+        return vec![ListItem::new(Line::from(out))];
+    }
+
+    // First row
+    let first_chunk: String = chars[..avail].iter().collect();
+    let mut rows: Vec<ListItem<'static>> = Vec::new();
+    let mut first_spans = spans;
+    append_highlighted(&mut first_spans, &first_chunk, bg, line, query, active_match);
+    rows.push(ListItem::new(Line::from(first_spans)));
+
+    // Continuation rows with blank gutter
+    let ln_gutter_w = if show_line_numbers { 7 } else { 0 };
+    let cont_avail = area_width.saturating_sub(ln_gutter_w + 2).max(1);
+    let mut idx = avail;
+    while idx < chars.len() {
+        let end = (idx + cont_avail).min(chars.len());
+        let chunk: String = chars[idx..end].iter().collect();
+        let mut cspans: Vec<Span> = Vec::new();
+        if show_line_numbers {
+            cspans.push(Span::styled("       ".to_string(), Style::default().bg(bg)));
+        }
+        cspans.push(Span::styled("  ".to_string(), Style::default().bg(bg)));
+        append_highlighted(&mut cspans, &chunk, bg, line, query, active_match);
+        rows.push(ListItem::new(Line::from(cspans)));
+        idx = end;
+    }
+    rows
+}
+
+fn append_highlighted(
+    spans: &mut Vec<Span<'static>>,
+    text: &str,
+    bg: Color,
+    line: &LogLine,
+    query: Option<&SearchQuery>,
+    active_match: Option<(u64, usize, usize)>,
+) {
+    let Some(q) = query else {
+        spans.push(Span::styled(text.to_owned(), Style::default().bg(bg)));
+        return;
+    };
+    let is_active_line = active_match.map(|(ln, _, _)| ln == line.line_no).unwrap_or(false);
+    let all_matches = q.find_all(text.as_bytes());
+    if all_matches.is_empty() {
+        spans.push(Span::styled(text.to_owned(), Style::default().bg(bg)));
+        return;
+    }
+    let (match_bg, match_fg) = if is_active_line {
+        (MATCH_ACTIVE_BG, MATCH_ACTIVE_FG)
+    } else {
+        (MATCH_DIM_BG, MATCH_DIM_FG)
+    };
+    let mut pos = 0usize;
+    for (start, end) in all_matches {
+        if pos < start {
+            spans.push(Span::styled(text[pos..start].to_owned(), Style::default().bg(bg)));
+        }
+        spans.push(Span::styled(
+            text[start..end].to_owned(),
+            Style::default().fg(match_fg).bg(match_bg),
+        ));
+        pos = end;
+    }
+    if pos < text.len() {
+        spans.push(Span::styled(text[pos..].to_owned(), Style::default().bg(bg)));
+    }
 }

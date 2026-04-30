@@ -23,6 +23,8 @@ pub fn render(
     context_size: usize,
     json_columns: &[String],
     bookmark_count: usize,
+    show_line_numbers: bool,
+    word_wrap: bool,
 ) {
     let mut spans: Vec<Span> = Vec::new();
 
@@ -74,6 +76,22 @@ pub fn render(
         spans.push(Span::styled(
             "DEDUP",
             Style::default().fg(Color::White).bg(Color::Rgb(150, 100, 200)).add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::raw(" │ "));
+    }
+
+    if show_line_numbers {
+        spans.push(Span::styled(
+            "LN",
+            Style::default().fg(Color::White).bg(Color::Rgb(70, 100, 140)).add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::raw(" │ "));
+    }
+
+    if word_wrap {
+        spans.push(Span::styled(
+            "WW",
+            Style::default().fg(Color::White).bg(Color::Rgb(140, 80, 130)).add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::raw(" │ "));
     }
