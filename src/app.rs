@@ -747,7 +747,7 @@ fn event_loop(app: &mut AppState, terminal: &mut Tui) -> Result<()> {
 }
 
 fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
-    // Help popup takes top priority — Esc/h/q close it; other keys ignored
+    // Help popup takes top priority — Esc/h/q close it; j/k scroll
     if app.help_open {
         match key.code {
             KeyCode::Esc | KeyCode::Char('h') | KeyCode::Char('q') => {
@@ -756,6 +756,12 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
             }
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 return true;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                if let Some(ref mut p) = app.help_popup { p.scroll_down(); }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if let Some(ref mut p) = app.help_popup { p.scroll_up(); }
             }
             _ => {}
         }

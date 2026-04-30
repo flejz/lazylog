@@ -7,12 +7,16 @@ use ratatui::{
 };
 
 #[derive(Debug, Clone, Default)]
-pub struct HelpPopup;
+pub struct HelpPopup {
+    pub scroll: u16,
+}
 
 impl HelpPopup {
     pub fn new() -> Self {
-        HelpPopup
+        HelpPopup { scroll: 0 }
     }
+    pub fn scroll_down(&mut self) { self.scroll = self.scroll.saturating_add(1); }
+    pub fn scroll_up(&mut self)   { self.scroll = self.scroll.saturating_sub(1); }
 }
 
 /// Two-column listing of all keybindings, grouped by category.
@@ -98,22 +102,15 @@ fn build_lines() -> Vec<Line<'static>> {
     lines
 }
 
-fn split_columns(all: Vec<Line<'static>>) -> (Vec<Line<'static>>, Vec<Line<'static>>) {
-    let mid = (all.len() + 1) / 2;
-    let mut left = all;
-    let right = left.split_off(mid);
-    (left, right)
-}
-
-pub fn render(frame: &mut Frame, full_area: Rect, _popup: &HelpPopup) {
+pub fn render(frame: &mut Frame, full_area: Rect, popup: &HelpPopup) {
     if full_area.height < 8 || full_area.width < 40 {
         return;
     }
 
-    let area = centered_rect(80, 80, full_area);
+    let area = centered_rect(70, 85, full_area);
     frame.render_widget(Clear, area);
 
-    let title = " Help — keybindings (h or Esc to close) ";
+    let title = " Help — j/k scroll · h or Esc close ";
     let block = Block::default()
         .title(title)
         .title_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
@@ -123,14 +120,9 @@ pub fn render(frame: &mut Frame, full_area: Rect, _popup: &HelpPopup) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(inner);
-
-    let (left, right) = split_columns(build_lines());
-    frame.render_widget(Paragraph::new(left), cols[0]);
-    frame.render_widget(Paragraph::new(right), cols[1]);
+    let para = Paragraph::new(build_lines())
+        .scroll((popup.scroll, 0));
+    frame.render_widget(para, inner);
 }
 
 /// Returns a Rect centered inside `area`, sized as a percentage of `area`.
