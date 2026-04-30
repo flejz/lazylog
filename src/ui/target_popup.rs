@@ -19,15 +19,25 @@ pub struct TargetPopup {
     pub scroll: usize,
     /// How many `::` segments to use. 1 = top crate only, 2 = two levels, etc.
     pub depth: usize,
-    /// Derived: deduplicated display list at current depth.
+    /// Derived: deduplicated display list at current depth, filtered by `filter_input`.
     pub display: Vec<String>,
+    /// Live fuzzy-filter substring (case-insensitive). Empty = no filter.
+    pub filter_input: String,
 }
 
 impl TargetPopup {
     pub fn new(all_targets: Vec<String>, existing: &[String], depth: usize) -> Self {
-        let display = make_display(&all_targets, depth);
+        let display = make_display(&all_targets, depth, "");
         let selected: HashSet<String> = existing.iter().cloned().collect();
-        Self { all_targets, selected, cursor: 0, scroll: 0, depth, display }
+        Self {
+            all_targets,
+            selected,
+            cursor: 0,
+            scroll: 0,
+            depth,
+            display,
+            filter_input: String::new(),
+        }
     }
 
     pub fn depth_inc(&mut self) {
@@ -40,9 +50,31 @@ impl TargetPopup {
 
     fn set_depth(&mut self, d: usize) {
         self.depth = d.max(1).min(8);
-        self.display = make_display(&self.all_targets, self.depth);
-        self.cursor = self.cursor.min(self.display.len().saturating_sub(1));
-        self.scroll = self.scroll.min(self.cursor);
+        self.refresh_display();
+    }
+
+    /// Append a character to the filter input and rebuild the display list.
+    pub fn push_filter_char(&mut self, c: char) {
+        self.filter_input.push(c);
+        self.refresh_display();
+    }
+
+    /// Drop the last filter char (no-op if empty) and rebuild the display list.
+    pub fn pop_filter_char(&mut self) {
+        if self.filter_input.pop().is_some() {
+            self.refresh_display();
+        }
+    }
+
+    fn refresh_display(&mut self) {
+        self.display = make_display(&self.all_targets, self.depth, &self.filter_input);
+        if self.display.is_empty() {
+            self.cursor = 0;
+            self.scroll = 0;
+        } else {
+            self.cursor = self.cursor.min(self.display.len() - 1);
+            self.scroll = self.scroll.min(self.cursor);
+        }
     }
 
     pub fn move_up(&mut self) {
@@ -87,11 +119,14 @@ impl TargetPopup {
     }
 }
 
-fn make_display(all: &[String], depth: usize) -> Vec<String> {
+fn make_display(all: &[String], depth: usize, filter: &str) -> Vec<String> {
+    let needle = filter.to_lowercase();
     let mut set = BTreeSet::new();
     for t in all {
         let seg: String = t.split("::").take(depth).collect::<Vec<_>>().join("::");
-        set.insert(seg);
+        if needle.is_empty() || seg.to_lowercase().contains(&needle) {
+            set.insert(seg);
+        }
     }
     set.into_iter().collect()
 }
@@ -119,13 +154,35 @@ pub fn render(frame: &mut Frame, full_area: Rect, popup: &TargetPopup) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
+    // Filter row at top of popup body
+    let filter_row = Rect {
+        x: inner.x,
+        y: inner.y,
+        width: inner.width,
+        height: 1.min(inner.height),
+    };
+    let filter_text = format!(" Filter: {}|", popup.filter_input);
+    frame.render_widget(
+        Paragraph::new(filter_text)
+            .style(Style::default().fg(Color::Rgb(180, 200, 220)).bg(Color::Rgb(28, 30, 36))),
+        filter_row,
+    );
+
+    let list_area = Rect {
+        x: inner.x,
+        y: inner.y + filter_row.height,
+        width: inner.width,
+        height: inner.height.saturating_sub(filter_row.height),
+    };
+
     if popup.display.is_empty() {
-        let msg = Paragraph::new("No targets discovered yet.\nNavigate the log to populate.")
+        let msg = Paragraph::new("No targets match the filter.")
             .style(Style::default().fg(Color::Rgb(100, 100, 115)));
-        frame.render_widget(msg, inner);
+        frame.render_widget(msg, list_area);
         return;
     }
 
+    let inner = list_area;
     let visible = inner.height as usize;
     let items: Vec<ListItem> = popup.display
         .iter()

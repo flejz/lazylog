@@ -13,6 +13,8 @@ pub enum InputMode {
     SearchBackward,
     CommandLine,
     FilterCrate,
+    /// Path entry for exporting the current filtered view (impl-io feature).
+    ExportPath,
 }
 
 pub fn render(
@@ -101,6 +103,18 @@ pub fn render(
                 Span::styled("_", Style::default().fg(Color::Cyan)),
                 Span::styled(
                     "   (Enter: apply  Esc: cancel)",
+                    Style::default().fg(Color::Rgb(70, 70, 80)),
+                ),
+            ])
+        }
+
+        InputMode::ExportPath => {
+            Line::from(vec![
+                Span::styled("export: ", Style::default().fg(Color::Cyan)),
+                Span::raw(input.to_owned()),
+                Span::styled("_", Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    "   (Enter: write  Esc: cancel)",
                     Style::default().fg(Color::Rgb(70, 70, 80)),
                 ),
             ])

@@ -666,7 +666,6 @@ fn event_loop(app: &mut AppState, terminal: &mut Tui) -> Result<()> {
                 app.dedup_enabled,
                 app.context_mode, app.context_size, &app.json_columns,
                 app.bookmarks.len(),
-                app.show_line_numbers,
             );
 
             let context_lines: std::collections::HashSet<u64> = if app.context_mode {
@@ -1168,12 +1167,17 @@ fn handle_popup_key(app: &mut AppState, key: crossterm::event::KeyEvent) -> bool
             }
         }
         KeyCode::Char(' ') => { popup.toggle_cursor(); }
-        KeyCode::Char('a') | KeyCode::Char('A') => { popup.select_all(); }
-        KeyCode::Char('n') | KeyCode::Char('N') => { popup.select_none(); }
-        KeyCode::Up   | KeyCode::Char('k') => { popup.move_up(); }
-        KeyCode::Down | KeyCode::Char('j') => { popup.move_down(visible_rows); }
+        KeyCode::Up   | KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => { popup.move_up(); }
+        KeyCode::Down | KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => { popup.move_down(visible_rows); }
+        KeyCode::Up   => { popup.move_up(); }
+        KeyCode::Down => { popup.move_down(visible_rows); }
         KeyCode::Left  | KeyCode::Char('[') => { popup.depth_dec(); }
         KeyCode::Right | KeyCode::Char(']') => { popup.depth_inc(); }
+        KeyCode::Backspace => { popup.pop_filter_char(); }
+        // Printable chars feed the fuzzy filter (allow `:` and `_` for module paths).
+        KeyCode::Char(c) if c.is_alphanumeric() || c == ':' || c == '_' || c == '-' || c == '.' => {
+            popup.push_filter_char(c);
+        }
         _ => {}
     }
     true
@@ -1442,4 +1446,9 @@ fn compute_stats_lines(app: &AppState) -> Vec<String> {
     }
 
     lines
+}
+
+/// Stub: pending impl-io agent's full implementation.
+fn export_filtered_view(_app: &AppState, _path: &str) {
+    // No-op stub so the build compiles; impl-io will add the real exporter.
 }
