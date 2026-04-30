@@ -245,21 +245,24 @@ impl AppState {
     }
 
     fn toggle_bookmark(&mut self) {
-        let phys = self.logical_to_physical(self.viewport_top);
+        let logical = (self.viewport_top + self.selected as u64).min(self.visible_line_count().saturating_sub(1));
+        let phys = self.logical_to_physical(logical);
         if !self.bookmarks.remove(&phys) {
             self.bookmarks.insert(phys);
         }
     }
 
     fn bookmark_prev(&mut self) {
-        let cur = self.logical_to_physical(self.viewport_top);
+        let logical = (self.viewport_top + self.selected as u64).min(self.visible_line_count().saturating_sub(1));
+        let cur = self.logical_to_physical(logical);
         if let Some(&phys) = self.bookmarks.range(..cur).next_back() {
             self.jump_to_line(phys);
         }
     }
 
     fn bookmark_next(&mut self) {
-        let cur = self.logical_to_physical(self.viewport_top);
+        let logical = (self.viewport_top + self.selected as u64).min(self.visible_line_count().saturating_sub(1));
+        let cur = self.logical_to_physical(logical);
         if let Some(&phys) = self.bookmarks.range(cur + 1..).next() {
             self.jump_to_line(phys);
         }
