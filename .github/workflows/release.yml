@@ -4,6 +4,9 @@ on:
   push:
     tags: ['v*']
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     name: build (${{ matrix.target }})
@@ -26,10 +29,6 @@ jobs:
 
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact: lazylog
-
-          - os: macos-13
-            target: x86_64-apple-darwin
             artifact: lazylog
 
     steps:
@@ -76,7 +75,6 @@ jobs:
           cp artifacts/lazylog-x86_64-unknown-linux-musl/lazylog   release/lazylog-linux-x86_64
           cp artifacts/lazylog-x86_64-pc-windows-msvc/lazylog.exe  release/lazylog-windows-x86_64.exe
           cp artifacts/lazylog-aarch64-apple-darwin/lazylog         release/lazylog-macos-arm64
-          cp artifacts/lazylog-x86_64-apple-darwin/lazylog          release/lazylog-macos-x86_64
           chmod +x release/lazylog-linux-x86_64 release/lazylog-macos-*
 
       - uses: softprops/action-gh-release@v2

@@ -166,23 +166,77 @@ impl AppState {
         if self.viewport_top > max_top { self.viewport_top = max_top; }
     }
 
+    /// Pan viewport without moving the logical cursor (mouse scroll).
+    fn pan_viewport(&mut self, down: bool, n: u64) {
+        let cursor_logical = self.viewport_top + self.selected as u64;
+        let total = self.visible_line_count();
+        let max_top = total.saturating_sub(self.viewport_height as u64);
+        if down {
+            self.viewport_top = (self.viewport_top + n).min(max_top);
+        } else {
+            self.viewport_top = self.viewport_top.saturating_sub(n);
+        }
+        // Keep selected pointing at the same logical line, clamped to viewport.
+        let max_sel = self.viewport_height.saturating_sub(1) as u64;
+        self.selected = if cursor_logical >= self.viewport_top {
+            (cursor_logical - self.viewport_top).min(max_sel) as usize
+        } else {
+            0
+        };
+    }
+
+    /// Move cursor to logical line; scroll only when hitting viewport edges.
+    fn move_cursor_to(&mut self, logical: u64) {
+        let total = self.visible_line_count();
+        let max_top = total.saturating_sub(self.viewport_height as u64);
+        let bottom = self.viewport_top + self.viewport_height as u64 - 1;
+        if logical >= self.viewport_top && logical <= bottom {
+            self.selected = (logical - self.viewport_top) as usize;
+        } else if logical > bottom {
+            self.viewport_top = (logical + 1).saturating_sub(self.viewport_height as u64).min(max_top);
+            self.selected = (logical - self.viewport_top) as usize;
+        } else {
+            self.viewport_top = logical;
+            self.selected = 0;
+        }
+    }
+
+    /// Center viewport on logical line (used for search jumps).
+    fn center_viewport(&mut self, logical: u64) {
+        let total = self.visible_line_count();
+        if total == 0 { self.viewport_top = 0; self.selected = 0; return; }
+        let half = self.half_page();
+        let max_top = total.saturating_sub(self.viewport_height as u64);
+        self.viewport_top = logical.saturating_sub(half).min(max_top);
+        self.selected = (logical - self.viewport_top) as usize;
+    }
+
     fn scroll_down(&mut self, n: u64) {
-        let max_top = self.visible_line_count().saturating_sub(self.viewport_height as u64);
-        self.viewport_top = (self.viewport_top + n).min(max_top);
+        let total = self.visible_line_count();
+        if total == 0 { return; }
+        let cursor = self.viewport_top + self.selected as u64;
+        let new_cursor = (cursor + n).min(total.saturating_sub(1));
+        self.move_cursor_to(new_cursor);
     }
 
     fn scroll_up(&mut self, n: u64) {
-        self.viewport_top = self.viewport_top.saturating_sub(n);
+        let cursor = self.viewport_top + self.selected as u64;
+        let new_cursor = cursor.saturating_sub(n);
+        self.move_cursor_to(new_cursor);
     }
 
     fn goto_bottom(&mut self) {
         let total = self.visible_line_count();
-        self.viewport_top = total.saturating_sub(self.viewport_height as u64);
+        if total == 0 { return; }
+        let max_top = total.saturating_sub(self.viewport_height as u64);
+        self.viewport_top = max_top;
+        self.selected = (total - 1 - self.viewport_top) as usize;
         self.h_scroll = 0;
     }
 
     fn goto_top(&mut self) {
         self.viewport_top = 0;
+        self.selected = 0;
         self.h_scroll = 0;
     }
     fn half_page(&self) -> u64 { (self.viewport_height as u64 / 2).max(1) }
@@ -215,9 +269,7 @@ impl AppState {
                 .map(|i| i as u64)
                 .unwrap_or(0)
         };
-        let half = self.half_page();
-        self.viewport_top = logical.saturating_sub(half);
-        self.ensure_viewport_valid();
+        self.center_viewport(logical);
         self.h_scroll = 0;
     }
 
@@ -894,9 +946,8 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
                     let input = app.input_buf.drain(..).collect::<String>();
                     app.input_mode = InputMode::Normal;
                     if let Ok(n) = input.parse::<u64>() {
-                        let target = n.saturating_sub(1);
-                        app.viewport_top = target.min(app.visible_line_count().saturating_sub(1));
-                        app.ensure_viewport_valid();
+                        let target = n.saturating_sub(1).min(app.visible_line_count().saturating_sub(1));
+                        app.center_viewport(target);
                     }
                 }
                 KeyCode::Esc       => { app.input_buf.clear(); app.input_mode = InputMode::Normal; }
@@ -1142,8 +1193,8 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
 
 fn handle_mouse(app: &mut AppState, mouse: crossterm::event::MouseEvent) {
     match mouse.kind {
-        MouseEventKind::ScrollDown => app.scroll_down(3),
-        MouseEventKind::ScrollUp   => app.scroll_up(3),
+        MouseEventKind::ScrollDown => app.pan_viewport(true, 3),
+        MouseEventKind::ScrollUp   => app.pan_viewport(false, 3),
         MouseEventKind::Down(MouseButton::Left) => {
             app.selected = mouse.row.saturating_sub(1) as usize;
         }
