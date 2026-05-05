@@ -20,6 +20,11 @@ jobs:
             artifact: lazylog
             musl: true
 
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            artifact: lazylog
+            musl: true
+
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: lazylog.exe
@@ -27,8 +32,17 @@ jobs:
             # On GH Actions the MSVC toolchain link.exe is already on PATH.
             linker: link.exe
 
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            artifact: lazylog.exe
+            linker: link.exe
+
           - os: macos-latest
             target: aarch64-apple-darwin
+            artifact: lazylog
+
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
             artifact: lazylog
 
     steps:
@@ -50,6 +64,7 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }}
         env:
           CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: ${{ matrix.linker }}
+          CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER: ${{ matrix.linker }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -72,10 +87,13 @@ jobs:
       - name: Rename artifacts
         run: |
           mkdir release
-          cp artifacts/lazylog-x86_64-unknown-linux-musl/lazylog   release/lazylog-linux-x86_64
-          cp artifacts/lazylog-x86_64-pc-windows-msvc/lazylog.exe  release/lazylog-windows-x86_64.exe
-          cp artifacts/lazylog-aarch64-apple-darwin/lazylog         release/lazylog-macos-arm64
-          chmod +x release/lazylog-linux-x86_64 release/lazylog-macos-*
+          cp artifacts/lazylog-x86_64-unknown-linux-musl/lazylog        release/lazylog-linux-x86_64
+          cp artifacts/lazylog-aarch64-unknown-linux-musl/lazylog        release/lazylog-linux-arm64
+          cp artifacts/lazylog-x86_64-pc-windows-msvc/lazylog.exe       release/lazylog-windows-x86_64.exe
+          cp artifacts/lazylog-aarch64-pc-windows-msvc/lazylog.exe      release/lazylog-windows-arm64.exe
+          cp artifacts/lazylog-aarch64-apple-darwin/lazylog              release/lazylog-macos-arm64
+          cp artifacts/lazylog-x86_64-apple-darwin/lazylog              release/lazylog-macos-x86_64
+          chmod +x release/lazylog-linux-* release/lazylog-macos-*
 
       - uses: softprops/action-gh-release@v2
         with:
