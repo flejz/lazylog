@@ -118,6 +118,19 @@ Scroll and click to select lines.
 
 ## Install
 
+Download the latest release binary from the [Releases](../../releases) page:
+
+| Platform | File |
+|---|---|
+| Windows (x86-64) | `lazylog-windows-x86_64.exe` |
+| Windows (ARM64) | `lazylog-windows-arm64.exe` |
+| Linux (x86-64, static) | `lazylog-linux-x86_64` |
+| Linux (ARM64, static) | `lazylog-linux-arm64` |
+| macOS (Apple Silicon) | `lazylog-macos-arm64` |
+| macOS (Intel) | `lazylog-macos-x86_64` |
+
+Or install with Cargo:
+
 ```sh
 cargo install --path .
 ```
