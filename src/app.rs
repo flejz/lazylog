@@ -410,6 +410,14 @@ pub struct Args {
     pub follow: bool,
     pub stdin_mode: bool,
     pub config_path: Option<PathBuf>,
+    /// True when launched from the browser. `q` then detaches instead of quitting.
+    pub embedded: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExitReason {
+    Quit,
+    Detach,
 }
 
 /// Convert "YYYY-MM-DDTHH:MM:SS" key to a pseudo-epoch in seconds.
@@ -484,7 +492,7 @@ const FILE_COLORS: &[ratatui::style::Color] = &[
     ratatui::style::Color::Rgb(0, 200, 100),
 ];
 
-pub fn run(args: Args) -> Result<()> {
+pub fn install_panic_hook() {
     let orig_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = crossterm::terminal::disable_raw_mode();
@@ -495,8 +503,18 @@ pub fn run(args: Args) -> Result<()> {
         );
         orig_hook(info);
     }));
-    let _guard = TerminalGuard;
+}
 
+pub fn run(args: Args) -> Result<()> {
+    install_panic_hook();
+    let _guard = TerminalGuard;
+    let mut terminal = setup_terminal()?;
+    let res = run_attached(args, &mut terminal);
+    restore_terminal(&mut terminal)?;
+    res.map(|_| ())
+}
+
+pub fn run_attached(args: Args, terminal: &mut Tui) -> Result<ExitReason> {
     // Spawn stdin reader BEFORE enabling raw mode (avoids crossterm conflict)
     let stdin_rx = if args.stdin_mode {
         let (tx, rx) = bounded::<Vec<u8>>(4096);
@@ -625,10 +643,8 @@ pub fn run(args: Args) -> Result<()> {
     // Discover non-standard levels from first sample of lines
     app.discover_levels();
 
-    let mut terminal = setup_terminal()?;
-    event_loop(&mut app, &mut terminal)?;
-    restore_terminal(&mut terminal)?;
-    Ok(())
+    let embedded = args.embedded;
+    event_loop(&mut app, terminal, embedded)
 }
 
 fn maybe_decompress(path: &PathBuf) -> Result<std::borrow::Cow<'_, PathBuf>> {
@@ -685,7 +701,7 @@ fn peek_format(path: &PathBuf) -> FormatHint {
     detect_format(&buf[..n])
 }
 
-fn event_loop(app: &mut AppState, terminal: &mut Tui) -> Result<()> {
+fn event_loop(app: &mut AppState, terminal: &mut Tui, embedded: bool) -> Result<ExitReason> {
     let tick = Duration::from_millis(16);
     loop {
         drain_stdin(app);
@@ -789,8 +805,11 @@ fn event_loop(app: &mut AppState, terminal: &mut Tui) -> Result<()> {
 
         if event::poll(tick)? {
             match event::read()? {
-                Event::Key(key) if key.kind == crossterm::event::KeyEventKind::Press
-                    && handle_key(app, key) => { return Ok(()); }
+                Event::Key(key) if key.kind == crossterm::event::KeyEventKind::Press => {
+                    if let Some(reason) = handle_key(app, key, embedded) {
+                        return Ok(reason);
+                    }
+                }
                 Event::Mouse(mouse) => handle_mouse(app, mouse),
                 _ => {}
             }
@@ -798,7 +817,7 @@ fn event_loop(app: &mut AppState, terminal: &mut Tui) -> Result<()> {
     }
 }
 
-fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
+fn handle_key(app: &mut AppState, key: KeyEvent, embedded: bool) -> Option<ExitReason> {
     // Help popup takes top priority — Esc/h/q close it; j/k scroll
     if app.help_open {
         match key.code {
@@ -807,7 +826,7 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
                 app.help_popup = None;
             }
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                return true;
+                return Some(ExitReason::Quit);
             }
             KeyCode::Char('j') | KeyCode::Down => {
                 if let Some(ref mut p) = app.help_popup { p.scroll_down(); }
@@ -817,7 +836,7 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
             }
             _ => {}
         }
-        return false;
+        return None;
     }
 
     if app.preset_load_popup.is_some() {
@@ -848,16 +867,16 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
             }
             _ => {}
         }
-        return false;
+        return None;
     }
 
     if app.time_popup.is_some() {
         handle_time_popup_key(app, key);
-        return false;
+        return None;
     }
     if app.column_popup.is_some() {
         handle_column_popup_key(app, key);
-        return false;
+        return None;
     }
 
     // JSON detail popup — handled before other popups so its keys take priority
@@ -872,7 +891,7 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
             }
             _ => {}
         }
-        return false;
+        return None;
     }
 
     // Stats popup — Esc closes
@@ -880,13 +899,13 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
         if matches!(key.code, KeyCode::Esc | KeyCode::Char('s') | KeyCode::Char('q')) {
             app.stats_popup = None;
         }
-        return false;
+        return None;
     }
 
     // Target popup takes priority — never propagates quit signal
     if app.target_popup.is_some() {
         handle_popup_key(app, key);
-        return false;
+        return None;
     }
 
     // Handle input modes first
@@ -938,7 +957,7 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
                 KeyCode::Char(c)   => { app.input_buf.push(c); }
                 _ => {}
             }
-            return false;
+            return None;
         }
         InputMode::CommandLine => {
             match key.code {
@@ -955,7 +974,7 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
                 KeyCode::Char(c) if c.is_ascii_digit() => { app.input_buf.push(c); }
                 _ => {}
             }
-            return false;
+            return None;
         }
         InputMode::FilterCrate => {
             match key.code {
@@ -978,7 +997,7 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
                 KeyCode::Char(c)   => { app.input_buf.push(c); }
                 _ => {}
             }
-            return false;
+            return None;
         }
         InputMode::ExportPath => {
             match key.code {
@@ -992,7 +1011,7 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
                 KeyCode::Char(c)   => { app.input_buf.push(c); }
                 _ => {}
             }
-            return false;
+            return None;
         }
         InputMode::PresetName => {
             match key.code {
@@ -1008,7 +1027,7 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
                 KeyCode::Char(c)   => { app.input_buf.push(c); }
                 _ => {}
             }
-            return false;
+            return None;
         }
         InputMode::Normal => {}
     }
@@ -1021,7 +1040,7 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
             KeyCode::Char('g') => {
                 app.key_state = KeyState::Normal;
                 app.goto_top();
-                return false;
+                return None;
             }
             _ => {
                 app.key_state = KeyState::Normal;
@@ -1031,8 +1050,10 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
     }
 
     match key.code {
-        KeyCode::Char('q') | KeyCode::Char('Q') => return true,
-        KeyCode::Char('c') if ctrl => return true,
+        KeyCode::Char('q') | KeyCode::Char('Q') => {
+            return Some(if embedded { ExitReason::Detach } else { ExitReason::Quit });
+        }
+        KeyCode::Char('c') if ctrl => return Some(ExitReason::Quit),
         KeyCode::Esc => { app.clear_search(); }
 
         KeyCode::Char('c') => {
@@ -1188,7 +1209,7 @@ fn handle_key(app: &mut AppState, key: KeyEvent) -> bool {
         _ => {}
     }
 
-    false
+    None
 }
 
 fn handle_mouse(app: &mut AppState, mouse: crossterm::event::MouseEvent) {
