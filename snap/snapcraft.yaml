@@ -1,0 +1,22 @@
+name: lazylog
+base: core22
+version: git
+summary: Tiny portable TUI log viewer
+description: |
+  Tiny portable TUI log viewer for any log format — JSON, plain text,
+  syslog, tracing-subscriber, env_logger, OpenTelemetry and more.
+  Supports multi-GB files, live tail, search, level and module filtering.
+
+grade: stable
+confinement: classic
+
+parts:
+  lazylog:
+    plugin: rust
+    source: .
+    build-packages:
+      - pkg-config
+
+apps:
+  lazylog:
+    command: bin/lazylog

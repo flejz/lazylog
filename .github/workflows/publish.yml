@@ -1,0 +1,159 @@
+name: Publish
+
+# Runs after a GitHub Release is published (not just drafted).
+# Each job is independent — a missing secret causes that job to fail
+# without blocking others. Set continue-on-error: true on optional targets.
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  # ── crates.io ─────────────────────────────────────────────────────────────
+  # Secret: CRATES_IO_TOKEN
+  publish-crates:
+    name: crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo publish --token ${{ secrets.CRATES_IO_TOKEN }}
+
+  # ── winget ────────────────────────────────────────────────────────────────
+  # Secret: WINGET_TOKEN (GitHub PAT: contents+pull-requests write on microsoft/winget-pkgs)
+  # First run: create the manifest at winget-pkgs manually, then this auto-PRs updates.
+  publish-winget:
+    name: winget
+    runs-on: ubuntu-latest
+    steps:
+      - uses: vedantmgoyal9/winget-releaser@latest
+        with:
+          identifier: flejz.lazylog
+          token: ${{ secrets.WINGET_TOKEN }}
+
+  # ── Homebrew tap ──────────────────────────────────────────────────────────
+  # Secret: HOMEBREW_TAP_TOKEN (GitHub PAT: contents write on flejz/homebrew-lazylog)
+  # Pre-req: create repo flejz/homebrew-lazylog with Formula/lazylog.rb
+  publish-homebrew:
+    name: homebrew
+    runs-on: ubuntu-latest
+    steps:
+      - uses: mislav/bump-homebrew-formula-action@v3
+        with:
+          formula-name: lazylog
+          formula-path: Formula/lazylog.rb
+          homebrew-tap: flejz/homebrew-lazylog
+          tag-name: ${{ github.ref_name }}
+          download-url: >-
+            https://github.com/flejz/lazylog/releases/download/${{ github.ref_name }}/lazylog-macos-arm64
+        env:
+          COMMITTER_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+  # ── Scoop bucket ──────────────────────────────────────────────────────────
+  # Secret: SCOOP_BUCKET_TOKEN (GitHub PAT: contents write on flejz/scoop-lazylog)
+  # Pre-req: create repo flejz/scoop-lazylog with bucket/lazylog.json
+  publish-scoop:
+    name: scoop
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: flejz/scoop-lazylog
+          token: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+          path: bucket-repo
+
+      - name: Update manifest version
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          VERSION="${VERSION#v}"
+          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" bucket-repo/bucket/lazylog.json
+          sed -i "s|/download/v[^/]*/|/download/v$VERSION/|g" bucket-repo/bucket/lazylog.json
+
+      - name: Push updated manifest
+        working-directory: bucket-repo
+        run: |
+          git config user.name "flejz"
+          git config user.email "flejz@protonmail.com"
+          git add bucket/lazylog.json
+          git commit -m "lazylog ${{ github.ref_name }}"
+          git push
+
+  # ── AUR ───────────────────────────────────────────────────────────────────
+  # Secret: AUR_SSH_PRIVATE_KEY (SSH key registered on aur.archlinux.org)
+  # Pre-req: create AUR package lazylog-bin manually on first release.
+  publish-aur:
+    name: aur
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set PKGBUILD version
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          VERSION="${VERSION#v}"
+          sed -i "s/^pkgver=.*/pkgver=$VERSION/" pkg/aur/PKGBUILD
+
+      - uses: KSXGitHub/github-actions-deploy-aur@v2.7.2
+        with:
+          pkgname: lazylog-bin
+          pkgbuild: ./pkg/aur/PKGBUILD
+          commit-username: flejz
+          commit-email: flejz@protonmail.com
+          ssh-private-key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit-message: "Update to ${{ github.ref_name }}"
+
+  # ── Snap ──────────────────────────────────────────────────────────────────
+  # Secret: SNAPCRAFT_STORE_CREDENTIALS
+  # Pre-req: register name on snapcraft.io, export credentials:
+  #   snapcraft export-login --snaps lazylog --channels stable -
+  publish-snap:
+    name: snap
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set snap version
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: sed -i "s/^version: .*/version: '${VERSION#v}'/" snap/snapcraft.yaml
+
+      - uses: snapcore/action-build@v1
+        id: build
+
+      - uses: snapcore/action-publish@v1
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        with:
+          snap: ${{ steps.build.outputs.snap }}
+          release: stable
+
+  # ── .deb (self-hosted apt instructions) ───────────────────────────────────
+  # Builds a .deb and attaches it to the existing GitHub Release.
+  # Users can install directly: sudo dpkg -i lazylog_*.deb
+  # For a full apt repo, host the .deb on GitHub Pages + reprepro (manual setup).
+  publish-deb:
+    name: .deb package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb
+
+      - name: Build .deb
+        run: cargo deb
+
+      - name: Upload .deb to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DEB=$(ls target/debian/*.deb | head -1)
+          gh release upload ${{ github.ref_name }} "$DEB" --clobber
