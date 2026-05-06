@@ -71,8 +71,15 @@ fn sections() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
             ("p",               "JSON detail popup (JSON only)"),
             ("s",               "stats popup (level counts)"),
         ]),
+        ("Browser mode", vec![
+            ("lazylog -b [DIR]", "launch interactive file browser"),
+            ("$LAZYLOG_DIR",     "default browse directory"),
+            ("q / Q",            "detach back to browser"),
+            ("Ctrl+C",           "quit lazylog entirely"),
+        ]),
         ("Quit", vec![
-            ("q / Q / Ctrl+C",  "quit"),
+            ("q / Q",            "quit (or detach if launched from browser)"),
+            ("Ctrl+C",           "quit unconditionally"),
         ]),
     ]
 }
